@@ -279,6 +279,49 @@ Error swd_read(struct ftdi_context & ftdi,
     return success;
 }
 /******************************************************************************/
+Error swd_write(struct ftdi_context & ftdi,
+		int address,
+		bool debug_port,
+		uint32 data)
+{
+    bool	parity     = swd_parity(data);
+    uint8	commands[] =
+    {
+	// Write SWD header for reading the DP IDCODE register
+	MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, 7,
+	swd_request(address, debug_port, true),
+	// Turn the bidirectional data line around
+	SET_BITS_LOW, state_idle, direction_read,
+	// And clock out one bit
+	CLK_BITS, 0,
+	// Now read in the target response
+	MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, 2,
+	// Turn the bidirectional data line back to an output
+	SET_BITS_LOW, state_idle, direction_write,
+	// And clock out one bit
+	CLK_BITS, 0,
+	// Then write the data
+	MPSSE_DO_WRITE | MPSSE_LSB, 0x03, 0x00,
+	(data >>  0) & 0xff,
+	(data >>  8) & 0xff,
+	(data >> 16) & 0xff,
+	(data >> 24) & 0xff,
+	// And finally write the parity bit
+	MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, 0, parity ? 0xff : 0x00,
+    };
+
+    uint8	response[1] = {0};
+
+    Check(mpsse_transaction(ftdi,
+			    commands, sizeof(commands),
+			    response, sizeof(response),
+			    1000));
+
+    CheckEQ(response[0], 0x20);
+
+    return success;
+}
+/******************************************************************************/
 Error swd_read_idcode(struct ftdi_context & ftdi, uint32 * idcode)
 {
     Check(swd_read(ftdi, 0x00, true, idcode));
