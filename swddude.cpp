@@ -1,3 +1,30 @@
+/*
+ * Copyright (c) 2012, Anton Staaf
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the project nor the names of its contributors
+ *       may be used to endorse or promote products derived from this software
+ *       without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
 #include "libs/command_line/command_line.h"
@@ -32,7 +59,7 @@ namespace CommandLine
     static Argument     *arguments[] = { &debug, null };
 }
 /******************************************************************************/
-Error setup_buffers(struct ftdi_context & ftdi)
+Error setup_buffers(ftdi_context & ftdi)
 {
     uint	read;
     uint	write;
@@ -50,7 +77,7 @@ Error setup_buffers(struct ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
-Error mpsse_transaction(struct ftdi_context & ftdi,
+Error mpsse_transaction(ftdi_context & ftdi,
 			uint8 * command, int command_count,
 			uint8 * response, int response_count,
 			int timeout)
@@ -86,7 +113,7 @@ Error mpsse_transaction(struct ftdi_context & ftdi,
     return Err::timeout;
 }
 /******************************************************************************/
-Error mpsse_synchronize(struct ftdi_context & ftdi)
+Error mpsse_synchronize(ftdi_context & ftdi)
 {
     uint8	commands[] = {0xaa};
     uint8	response[2];
@@ -102,7 +129,7 @@ Error mpsse_synchronize(struct ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
-Error mpsse_setup(struct ftdi_context & ftdi)
+Error mpsse_setup(ftdi_context & ftdi)
 {
     /*
      * 1MHz = 60Mhz / ((29 + 1) * 2)
@@ -133,7 +160,7 @@ Error mpsse_setup(struct ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
-Error flash_leds(struct ftdi_context & ftdi)
+Error flash_leds(ftdi_context & ftdi)
 {
     for (int i = 0; i < 2; ++i)
     {
@@ -150,7 +177,7 @@ Error flash_leds(struct ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
-Error target_reset(struct ftdi_context & ftdi)
+Error target_reset(ftdi_context & ftdi)
 {
     uint8	commands[] = {SET_BITS_LOW, 0x00, direction_write};
 
@@ -218,7 +245,7 @@ bool swd_parity(uint32 data)
     return (step & 1);
 }
 /******************************************************************************/
-Error swd_reset(struct ftdi_context & ftdi)
+Error swd_reset(ftdi_context & ftdi)
 {
     uint8	commands[] =
     {
@@ -234,7 +261,7 @@ Error swd_reset(struct ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
-Error swd_read(struct ftdi_context & ftdi,
+Error swd_read(ftdi_context & ftdi,
 	       int address,
 	       bool debug_port,
 	       uint32 * data)
@@ -279,7 +306,7 @@ Error swd_read(struct ftdi_context & ftdi,
     return success;
 }
 /******************************************************************************/
-Error swd_write(struct ftdi_context & ftdi,
+Error swd_write(ftdi_context & ftdi,
 		int address,
 		bool debug_port,
 		uint32 data)
@@ -322,14 +349,14 @@ Error swd_write(struct ftdi_context & ftdi,
     return success;
 }
 /******************************************************************************/
-Error swd_read_idcode(struct ftdi_context & ftdi, uint32 * idcode)
+Error swd_read_idcode(ftdi_context & ftdi, uint32 * idcode)
 {
     Check(swd_read(ftdi, 0x00, true, idcode));
 
     return success;
 }
 /******************************************************************************/
-Error swd_initialize(struct ftdi_context & ftdi)
+Error swd_initialize(ftdi_context & ftdi)
 {
     uint32	idcode = 0;
 
@@ -345,7 +372,7 @@ Error swd_initialize(struct ftdi_context & ftdi)
 Error error_main(int argc, char const ** argv)
 {
     Error		check_error = success;
-    struct ftdi_context	ftdi;
+    ftdi_context	ftdi;
     uint		chipid;
 
     CheckCleanupP(ftdi_init(&ftdi), init_failed);
