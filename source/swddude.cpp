@@ -293,10 +293,10 @@ Error swd_read(ftdi_context & ftdi,
 
     CheckEQ(response[0] >> 5, 0x1);
 
-    *data = (((((((response[4]) << 8) |
-		 response[3]) << 8) |
-	       response[2]) << 8) |
-	     response[1]);
+    *data = response[1]
+          | response[2] << 8
+          | response[3] << 16
+          | response[4] << 24;
 
     CheckEQ(response[5] & 0x40, swd_parity(*data) ? 0x40 : 0x00);
 
