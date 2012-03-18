@@ -359,7 +359,10 @@ Error swd_initialize(ftdi_context & ftdi)
     Check(swd_reset(ftdi));
     Check(swd_read_idcode(ftdi, &idcode));
 
-    debug(1, "ID code: %X", idcode);
+    debug(1, "Debug Port ID code: %08X", idcode);
+    debug(1, "  Version:  %X", idcode >> 28);
+    debug(1, "  PARTNO:   %04X", (idcode >> 12) & 0xFFFF);
+    debug(1, "  Designer: %03X", (idcode >> 1) & 0x7FF);
 
     return success;
 }
