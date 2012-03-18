@@ -339,7 +339,7 @@ Error swd_write(ftdi_context & ftdi,
     Check(mpsse_write(ftdi, commands, sizeof(commands)));
     Check(mpsse_read (ftdi, response, sizeof(response), 1000));
 
-    CheckEQ(response[0], 0x20);
+    CheckEQ(response[0] >> 5, 0x1);
 
     return success;
 }
