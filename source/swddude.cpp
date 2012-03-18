@@ -291,7 +291,7 @@ Error swd_read(ftdi_context & ftdi,
     Check(mpsse_write(ftdi, commands, sizeof(commands)));
     Check(mpsse_read (ftdi, response, sizeof(response), 1000));
 
-    CheckEQ(response[0], 0x20);
+    CheckEQ(response[0] >> 5, 0x1);
 
     *data = (((((((response[4]) << 8) |
 		 response[3]) << 8) |
@@ -351,6 +351,13 @@ Error swd_read_idcode(ftdi_context & ftdi, uint32 * idcode)
     return success;
 }
 /******************************************************************************/
+Error swd_read_ctrl_stat(ftdi_context & ftdi, uint32 * ctrl_stat)
+{
+    Check(swd_read(ftdi, 0x01, true, ctrl_stat));
+
+    return success;
+}
+/******************************************************************************/
 Error swd_initialize(ftdi_context & ftdi)
 {
     uint32	idcode = 0;
@@ -364,6 +371,10 @@ Error swd_initialize(ftdi_context & ftdi)
     debug(1, "  PARTNO:   %04X", (idcode >> 12) & 0xFFFF);
     debug(1, "  Designer: %03X", (idcode >> 1) & 0x7FF);
 
+    uint32 ctrl_stat = 0;
+    Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
+
+    debug(1, "Debug Port CTRL/STAT: %08X", ctrl_stat);
     return success;
 }
 /******************************************************************************/
