@@ -245,6 +245,114 @@ Error swd_reset(ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
+Error crawl_memory_ap(DebugAccessPort &dap, uint8_t ap) {
+  uint32_t base;
+  Check(dap.post_read_ap_in_bank(2));
+  Check(dap.read_rdbuff(&base));
+
+  if ((base & 3) == 3) {
+    // ARM ADIv5-style debug entry
+    uint32_t base_addr = base & ~0xFFF;
+    
+    // Set up the TAR/DRW registers to read the register space.
+    Check(dap.select_ap_bank(ap, 0));
+    Check(dap.write_ap_in_bank(0, 2));  // Set CSW to 4-byte transactions
+    for (uint32_t reg = 0; reg < 4; ++reg) {
+      Check(dap.write_ap_in_bank(1, base_addr + 0xFF0 + reg*4));  // TAR
+      Check(dap.post_read_ap_in_bank(3));
+
+      uint32_t contents;
+      Check(dap.read_rdbuff(&contents));
+
+      debug(1, "  Component ID%d (%08X) = %08X", reg,
+          base_addr + 0xFF0 + reg*4, contents);
+
+      switch (reg) {
+        case 0:
+          CheckEQ(contents, 0x0D);
+          break;
+
+        case 1: {
+          uint8_t component_class = (contents >> 4) & 0xF;
+          switch (component_class) {
+            case 0:
+              debug(1, "    Generic Verification Component");
+              break;
+
+            case 1:
+              debug(1, "    ROM Table");
+              break;
+
+            case 9:
+              debug(1, "    Debug Component");
+              break;
+
+            case 0xB:
+              debug(1, "    Peripheral Test Block");
+              break;
+
+            case 0xD:
+              debug(1, "    OptimoDE Data Engine Subsystem");
+              break;
+
+            case 0xE:
+              debug(1, "    Generic IP Component");
+              break;
+
+            case 0xF:
+              debug(1, "    PrimeCell Component");
+              break;
+          }
+          break;
+        } 
+
+        case 2:
+          CheckEQ(contents, 0x05);
+          break;
+
+        case 3:
+          CheckEQ(contents, 0xB1);
+          break;
+      }
+    }
+
+    uint64_t peripheral_id = 0;
+
+    for (uint32_t reg = 0; reg < 4; ++reg) {
+      Check(dap.write_ap_in_bank(1, base_addr + 0xFE0 + reg*4));  // TAR
+      Check(dap.post_read_ap_in_bank(3));
+
+      uint32_t contents;
+      Check(dap.read_rdbuff(&contents));
+
+      peripheral_id |= (contents & 0xFF) << (reg * 8);
+    }
+
+    for (uint32_t reg = 4; reg < 8; ++reg) {
+      Check(dap.write_ap_in_bank(1, base_addr + 0xFC0 + reg*4));  // TAR
+      Check(dap.post_read_ap_in_bank(3));
+
+      uint32_t contents;
+      Check(dap.read_rdbuff(&contents));
+
+      peripheral_id |= (contents & 0xFF) << (reg * 8);
+    }
+
+    debug(1, "  Peripheral ID = %016llX", peripheral_id);
+    debug(1, "    Part No:     %llX", peripheral_id & 0xFFF);
+    if (peripheral_id & (1 << 19)) {
+      debug(1, "    JEP106 ID:   %llX", (peripheral_id >> 12) & 0x7F);
+      debug(1, "    JEP106 CC:   %llX", (peripheral_id >> 32) & 0xF);
+    }
+    debug(1, "    Rev:         %llX", (peripheral_id >> 20) & 0xF);
+    debug(1, "    Cust.Mod:    %llX", (peripheral_id >> 24) & 0xF);
+    debug(1, "    Manuf.Rev:   %llX", (peripheral_id >> 28) & 0xF);
+    debug(1, "    4KiB Blocks: 2^%lld", (peripheral_id >> 36) & 0xF);
+  }
+
+  return success;
+}
+/******************************************************************************/
 Error enumerate_access_ports(ftdi_context &ftdi) {
   SWDInterface swd(&ftdi);
   Check(swd.initialize());
@@ -253,7 +361,6 @@ Error enumerate_access_ports(ftdi_context &ftdi) {
   Check(dap.reset_state());
 
   for (uint32_t ap = 0; ap < 256; ++ap) {
-    debug(2, "Selecting AP %02X...", ap);
     Check(dap.select_ap_bank(ap, 0xF));  // Last bank contains ident info
     
     uint32_t idr;
@@ -262,6 +369,10 @@ Error enumerate_access_ports(ftdi_context &ftdi) {
     if (idr == 0) continue;  // AP not implemented
 
     debug(1, "AP %02X IDR = %08X", ap, idr);
+
+    if (idr & (1 << 16)) {  // Memory Access Port
+      Check(crawl_memory_ap(dap, ap));
+    }
   }
 
   return success;
