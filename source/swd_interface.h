@@ -155,6 +155,8 @@ class AccessPort {
 public:
   AccessPort(DebugAccessPort *, uint8_t);
 
+  uint8_t index() const;
+
   Err::Error post_read(uint8_t addr);
   Err::Error read_pipelined(uint8_t addr, uint32_t *lastData);
   Err::Error read_last_result(uint32_t *lastData);

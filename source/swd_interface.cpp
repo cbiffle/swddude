@@ -322,6 +322,10 @@ Error DebugAccessPort::reset_state() {
 AccessPort::AccessPort(DebugAccessPort *dap, uint8_t ap)
     : _dap(*dap), _ap(ap) {}
 
+uint8_t AccessPort::index() const {
+  return _ap;
+}
+
 Error AccessPort::post_read(uint8_t address) {
   Check(_dap.select_ap_bank(_ap, address >> 4));
   return _dap.post_read_ap_in_bank((address & 0xF) >> 2);
