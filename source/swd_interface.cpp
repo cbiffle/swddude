@@ -314,3 +314,35 @@ Error DebugAccessPort::reset_state() {
   return success;
 }
 
+
+/*
+ * Implementation of AccessPort
+ */
+
+AccessPort::AccessPort(DebugAccessPort *dap, uint8_t ap)
+    : _dap(*dap), _ap(ap) {}
+
+Error AccessPort::post_read(uint8_t address) {
+  Check(_dap.select_ap_bank(_ap, address >> 4));
+  return _dap.post_read_ap_in_bank((address & 0xF) >> 2);
+}
+
+Error AccessPort::read_pipelined(uint8_t address, uint32_t *lastData) {
+  Check(_dap.select_ap_bank(_ap, address >> 4));
+  return _dap.read_ap_in_bank_pipelined((address & 0xF) >> 2, lastData);
+}
+
+Error AccessPort::read_last_result(uint32_t *lastData) {
+  return _dap.read_rdbuff(lastData);
+}
+
+Error AccessPort::read_blocking(uint8_t address, uint32_t *data,
+    uint32_t tries) {
+  Check(post_read(address));
+  return read_last_result(data);
+}
+
+Error AccessPort::write(uint8_t address, uint32_t data) {
+  Check(_dap.select_ap_bank(_ap, address >> 4));
+  return _dap.write_ap_in_bank((address & 0xF) >> 2, data);
+}

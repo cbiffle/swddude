@@ -148,4 +148,20 @@ public:
   Err::Error write_ap_in_bank(int address, uint32_t data);
 };
 
+class AccessPort {
+  DebugAccessPort &_dap;
+  uint8_t _ap;
+
+public:
+  AccessPort(DebugAccessPort *, uint8_t);
+
+  Err::Error post_read(uint8_t addr);
+  Err::Error read_pipelined(uint8_t addr, uint32_t *lastData);
+  Err::Error read_last_result(uint32_t *lastData);
+
+  Err::Error read_blocking(uint8_t addr, uint32_t *lastData, uint32_t tries);
+
+  Err::Error write(uint8_t addr, uint32_t data);
+};
+
 #endif  // SWD_INTERFACE_H
