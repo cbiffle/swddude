@@ -298,6 +298,10 @@ Error DebugAccessPort::read_ap_in_bank_pipelined(int addr, uint32_t *last) {
   return _swd.read(addr, false, last);
 }
 
+Error DebugAccessPort::write_ap_in_bank(int addr, uint32_t data) {
+  return _swd.write(addr, false, data);
+}
+
 Error DebugAccessPort::select_ap_bank(uint8_t ap, uint8_t bank) {
   return write_select((ap << 24) | ((bank & 0xF) << 4));
 }
