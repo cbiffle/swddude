@@ -358,6 +358,34 @@ Error swd_read_ctrl_stat(ftdi_context & ftdi, uint32 * ctrl_stat)
     return success;
 }
 /******************************************************************************/
+Error swd_write_ctrl_stat(ftdi_context & ftdi, uint32 ctrl_stat)
+{
+    Check(swd_write(ftdi, 0x01, true, ctrl_stat));
+
+    return success;
+}
+/******************************************************************************/
+Error swd_read_rdbuff(ftdi_context & ftdi, uint32 * rdbuff)
+{
+    Check(swd_read(ftdi, 0x03, true, rdbuff));
+
+    return success;
+}
+/******************************************************************************/
+Error swd_write_select(ftdi_context & ftdi, uint32 select)
+{
+    Check(swd_write(ftdi, 0x02, true, select));
+
+    return success;
+}
+/******************************************************************************/
+Error swd_write_abort(ftdi_context & ftdi, uint32 abort)
+{
+    Check(swd_write(ftdi, 0x00, true, abort));
+
+    return success;
+}
+/******************************************************************************/
 Error swd_initialize(ftdi_context & ftdi)
 {
     uint32	idcode = 0;
@@ -369,12 +397,110 @@ Error swd_initialize(ftdi_context & ftdi)
     debug(1, "Debug Port ID code: %08X", idcode);
     debug(1, "  Version:  %X", idcode >> 28);
     debug(1, "  PARTNO:   %04X", (idcode >> 12) & 0xFFFF);
-    debug(1, "  Designer: %03X", (idcode >> 1) & 0x7FF);
+    {
+      uint8 jep106_continuation = (idcode >> 8) & 0xF;
+      uint8 jep106_identity = (idcode >> 1) & 0x7F;
+
+      debug(1, "  Designer: %X:%02X%s", jep106_continuation,
+                                        jep106_identity,
+              (jep106_continuation == 4 && jep106_identity == 0x3B)?
+                " (ARM Ltd)" : "");
+    }
 
     uint32 ctrl_stat = 0;
     Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
 
-    debug(1, "Debug Port CTRL/STAT: %08X", ctrl_stat);
+    debug(1, "Initial Debug Port CTRL/STAT: %08X", ctrl_stat);
+
+    if (ctrl_stat & (1 << 5))  // Sticky Error
+    {
+      debug(1, "  Clearing STKERR");
+      Check(swd_write_abort(ftdi, 1 << 2));
+    }
+
+    // Turn on power to the debug systems.
+    Check(swd_write_ctrl_stat(ftdi, (1 << 30)  // CSYSPWRUPREQ
+                                  | (1 << 28)  // CDBGPWRUPREQ
+                                 ));
+
+    Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
+    debug(1, "New Debug Port CTRL/STAT: %08X", ctrl_stat);
+
+    for (uint32 ap = 0; ap < 256; ++ap)
+    {
+      debug(2, "Selecting AP %02X...", ap);
+      Check(swd_write_select(ftdi, (ap << 24) | (0xF << 4)));
+
+      Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
+      debug(2, "Debug Port CTRL/STAT: %08X", ctrl_stat);
+
+      uint32 idr;
+      Check(swd_read(ftdi, 0x3, false, &idr));
+      Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
+
+      debug(2, "Debug Port CTRL/STAT: %08X", ctrl_stat);
+      if (ctrl_stat & (1 << 5))  // Sticky Error
+      {
+        debug(2, "  Clearing STKERR");
+        Check(swd_write_abort(ftdi, 1 << 2));
+        Check(swd_read(ftdi, 0x3, false, &idr));
+        Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
+        debug(2, "Debug Port CTRL/STAT: %08X", ctrl_stat);
+      } else {
+        Check(swd_read_rdbuff(ftdi, &idr));
+        if (idr != 0) {
+          debug(1, "AP %02X IDR = %08X", ap, idr);
+          debug(1, "  Revision: %X", idr >> 28);
+          uint8 jep106_continuation = (idr >> 24) & 0xF;
+          uint8 jep106_identity = (idr >> 17) & 0x7F;
+          debug(1, "  JEP106 ID: %X:%02X", jep106_continuation,
+                                           jep106_identity);
+          debug(1, "  Class: %X%s", (idr >> 16) & 1,
+              (idr >> 16) & 1 ? " (Memory Access Port)" : "");
+          uint8 id = idr & 0xFF;
+          debug(1, "  ID: %02X", id);
+
+          if (jep106_continuation == 0x4 && jep106_identity == 0x3B)
+          {
+            // ARM Ltd. Part
+            switch (id & 0xF)
+            {
+              case 0x00:
+                debug(1, "  Type: JTAG Connection (0)");
+                break;
+
+              case 0x01:
+                debug(1, "  Type: AMBA AHB Bus (1)");
+                break;
+
+              case 0x02:
+                debug(1, "  Type: AMBA APB bus (1)");
+                break;
+
+              default:
+                debug(1, "  Type: Unexpected/unknown (%X)", id & 0xF);
+                break;
+            }
+
+            debug(1, "  Variant: %X", id >> 4);
+          }
+
+          if ((idr >> 16) & 1)
+          {
+            // Memory access port
+            Check(swd_write_select(ftdi, (ap << 24) | (0 << 4)));  // Bank!
+
+            Check(swd_write(ftdi, 0, false, 2));  // Clear status bits
+            Check(swd_write(ftdi, 1, false, 0));  // Set transfer address to 0
+
+            uint32 mem = 0;
+            Check(swd_read(ftdi, 3, false, &mem));  // Start data transfer
+            Check(swd_read_rdbuff(ftdi, &mem));  // Get result
+            debug(1, "  First word of memory: %08X", mem);
+          }
+        }
+      }
+    }
     return success;
 }
 /******************************************************************************/
