@@ -59,7 +59,7 @@ namespace CommandLine
     static Argument     *arguments[] = { &debug, null };
 }
 /******************************************************************************/
-Error setup_buffers(ftdi_context & ftdi)
+Error mpsse_setup_buffers(ftdi_context & ftdi)
 {
     uint	read;
     uint	write;
@@ -77,14 +77,16 @@ Error setup_buffers(ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
-Error mpsse_transaction(ftdi_context & ftdi,
-			uint8 * command, int command_count,
-			uint8 * response, int response_count,
-			int timeout)
+Error mpsse_write(ftdi_context & ftdi, uint8 * buffer, int count)
 {
-    int		count = 0;
+    CheckEQ(ftdi_write_data(&ftdi, buffer, count), count);
 
-    CheckEQ(ftdi_write_data(&ftdi, command, command_count), command_count);
+    return success;
+}
+/******************************************************************************/
+Error mpsse_read(ftdi_context & ftdi, uint8 * buffer, int count, int timeout)
+{
+    int	received = 0;
 
     /*
      * This is a crude timeout mechanism.  The time that we wait will never
@@ -93,11 +95,11 @@ Error mpsse_transaction(ftdi_context & ftdi,
      */
     for (int i = 0; i < timeout; ++i)
     {
-	count += CheckP(ftdi_read_data(&ftdi,
-				       response + count,
-				       response_count - count));
+	received += CheckP(ftdi_read_data(&ftdi,
+					  buffer + received,
+					  count - received));
 
-	if (count >= response_count)
+	if (received >= count)
 	{
 	    debug(2, "Response took about %d milliseconds.", i);
 	    return success;
@@ -118,10 +120,8 @@ Error mpsse_synchronize(ftdi_context & ftdi)
     uint8	commands[] = {0xaa};
     uint8	response[2];
 
-    Check(mpsse_transaction(ftdi,
-			    commands, sizeof(commands),
-			    response, sizeof(response),
-			    1000));
+    Check(mpsse_write(ftdi, commands, sizeof(commands)));
+    Check(mpsse_read (ftdi, response, sizeof(response), 1000));
 
     CheckEQ(response[0], 0xfa);
     CheckEQ(response[1], 0xaa);
@@ -145,7 +145,7 @@ Error mpsse_setup(ftdi_context & ftdi)
 	SET_BITS_HIGH, 0x00, 0x00
     };
 
-    Check(setup_buffers(ftdi));
+    Check(mpsse_setup_buffers(ftdi));
 
     CheckP(ftdi_set_latency_timer(&ftdi, 1));
 
@@ -255,8 +255,7 @@ Error swd_reset(ftdi_context & ftdi)
 	CLK_BITS, 0
     };
 
-    CheckEQ(ftdi_write_data(&ftdi, commands, sizeof(commands)),
-	    sizeof(commands));
+    Check(mpsse_write(ftdi, commands, sizeof(commands)));
 
     return success;
 }
@@ -268,7 +267,7 @@ Error swd_read(ftdi_context & ftdi,
 {
     uint8	commands[] =
     {
-	// Write SWD header for reading the DP IDCODE register
+	// Write SWD header
 	MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, 7,
 	swd_request(address, debug_port, false),
 	// Turn the bidirectional data line around
@@ -289,10 +288,8 @@ Error swd_read(ftdi_context & ftdi,
 
     uint8	response[6] = {0};
 
-    Check(mpsse_transaction(ftdi,
-			    commands, sizeof(commands),
-			    response, sizeof(response),
-			    1000));
+    Check(mpsse_write(ftdi, commands, sizeof(commands)));
+    Check(mpsse_read (ftdi, response, sizeof(response), 1000));
 
     CheckEQ(response[0], 0x20);
 
@@ -314,7 +311,7 @@ Error swd_write(ftdi_context & ftdi,
     bool	parity     = swd_parity(data);
     uint8	commands[] =
     {
-	// Write SWD header for reading the DP IDCODE register
+	// Write SWD header
 	MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, 7,
 	swd_request(address, debug_port, true),
 	// Turn the bidirectional data line around
@@ -339,10 +336,8 @@ Error swd_write(ftdi_context & ftdi,
 
     uint8	response[1] = {0};
 
-    Check(mpsse_transaction(ftdi,
-			    commands, sizeof(commands),
-			    response, sizeof(response),
-			    1000));
+    Check(mpsse_write(ftdi, commands, sizeof(commands)));
+    Check(mpsse_read (ftdi, response, sizeof(response), 1000));
 
     CheckEQ(response[0], 0x20);
 
