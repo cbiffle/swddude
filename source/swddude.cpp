@@ -245,6 +245,28 @@ Error swd_reset(ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
+Error enumerate_access_ports(ftdi_context &ftdi) {
+  SWDInterface swd(&ftdi);
+  Check(swd.initialize());
+
+  DebugAccessPort dap(&swd);
+  Check(dap.reset_state());
+
+  for (uint32_t ap = 0; ap < 256; ++ap) {
+    debug(2, "Selecting AP %02X...", ap);
+    Check(dap.select_ap_bank(ap, 0xF));  // Last bank contains ident info
+    
+    uint32_t idr;
+    Check(dap.post_read_ap_in_bank(3));
+    Check(dap.read_rdbuff(&idr));
+    if (idr == 0) continue;  // AP not implemented
+
+    debug(1, "AP %02X IDR = %08X", ap, idr);
+  }
+
+  return success;
+}
+/******************************************************************************/
 Error error_main(int argc, char const ** argv)
 {
     Error		check_error = success;
@@ -266,16 +288,8 @@ Error error_main(int argc, char const ** argv)
     CheckCleanup(mpsse_setup(ftdi), mpsse_failed);
     CheckCleanup(flash_leds(ftdi), leds_failed);
 
-    {
-      SWDInterface swd(&ftdi);
-      CheckCleanup(swd.initialize(), initialize_failed);
-      {
-        DebugAccessPort dap(&swd);
-        CheckCleanup(dap.reset_state(), initialize_failed);
-      }
-    }
+    enumerate_access_ports(ftdi);
 
-  initialize_failed:
   leds_failed:
     CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
 

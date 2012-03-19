@@ -111,18 +111,37 @@ public:
   Err::Error reset_state();
 
   /*
+   * Selects a particular Access Port, and bank within that Access Port.
+   * Clears the SELECT.CTRLSEL bit to 0, making the Wire Control Register in the
+   * Debug Port inaccessible.
+   */
+  Err::Error select_ap_bank(uint8_t ap, uint8_t bank);
+
+  /*
    * Posts a read of one of the four AP registers within the current bank of the
    * current Access Port, determined by the contents of the Debug Port's SELECT
    * register.
    *
-   * Returns the result of the previously posted read, if ready, into data.  To
-   * get the result of this read, either call read_ap_in_bank again, or read the
-   * Debug Port's RDBUFF register.
+   * To get the result of this read, either call read_rdbuff (before posting
+   * another AP read) or call read_ap_in_bank_pipelined to post another read
+   * while retrieving the result.
    */
-  Err::Error read_ap_in_bank(int address, uint32_t *data);
+  Err::Error post_read_ap_in_bank(int address);
 
   /*
-   * Alters one of hte four AP registers within the current bank of the current
+   * Posts a read of one of the four AP registers within the current bank of the
+   * current Access Port, determined by the contents of the Debug Port's SELECT
+   * register.  Simultaneously returns the result of the previously posted AP
+   * read.
+   * 
+   * To get the result of this read, either call read_rdbuff (before posting
+   * another AP read) or call read_ap_in_bank_pipelined to post another read
+   * while retrieving the result.
+   */
+  Err::Error read_ap_in_bank_pipelined(int address, uint32_t *lastData);
+
+  /*
+   * Alters one of the four AP registers within the current bank of the current
    * Access Port, determined by the contents of the Debug Port's SELECT
    * register.
    */
