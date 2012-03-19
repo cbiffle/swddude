@@ -30,7 +30,7 @@ depth			:= ..
 products		:= swddude
 
 swddude[type]		:= program
-swddude[cpp_files]	:= swddude.cpp
+swddude[cpp_files]	:= swddude.cpp swd_interface.cpp
 swddude[libs]		:= error:error
 swddude[libs]		+= log:log
 swddude[libs]		+= command_line:command_line

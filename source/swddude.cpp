@@ -25,6 +25,8 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "swd_interface.h"
+
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
 #include "libs/command_line/command_line.h"
@@ -177,23 +179,6 @@ Error flash_leds(ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
-Error target_reset(ftdi_context & ftdi)
-{
-    uint8	commands[] = {SET_BITS_LOW, 0x00, direction_write};
-
-    commands[1] = state_reset_target;
-    CheckEQ(ftdi_write_data(&ftdi, commands, sizeof(commands)),
-	    sizeof(commands));
-
-    usleep(20000);
-
-    commands[1] = state_idle;
-    CheckEQ(ftdi_write_data(&ftdi, commands, sizeof(commands)),
-	    sizeof(commands));
-
-    return success;
-}
-/******************************************************************************/
 #define SWD_HEADER_START	0x01
 #define SWD_HEADER_AP		0x02
 #define SWD_HEADER_DP		0x00
@@ -260,250 +245,6 @@ Error swd_reset(ftdi_context & ftdi)
     return success;
 }
 /******************************************************************************/
-Error swd_read(ftdi_context & ftdi,
-	       int address,
-	       bool debug_port,
-	       uint32 * data)
-{
-    uint8	commands[] =
-    {
-	// Write SWD header
-	MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, 7,
-	swd_request(address, debug_port, false),
-	// Turn the bidirectional data line around
-	SET_BITS_LOW, state_idle, direction_read,
-	// And clock out one bit
-	CLK_BITS, 0,
-	// Now read in the target response
-	MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, 2,
-	// Then read in the target data
-	MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB, 0x03, 0x00,
-	// And finally read in the target parity and turn around
-	MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, 1,
-	// Turn the bidirectional data line back to an output
-	SET_BITS_LOW, state_idle, direction_write,
-	// And clock out one bit
-	CLK_BITS, 0,
-    };
-
-    uint8	response[6] = {0};
-
-    Check(mpsse_write(ftdi, commands, sizeof(commands)));
-    Check(mpsse_read (ftdi, response, sizeof(response), 1000));
-
-    CheckEQ(response[0] >> 5, 0x1);
-
-    *data = response[1]
-          | response[2] << 8
-          | response[3] << 16
-          | response[4] << 24;
-
-    CheckEQ(response[5] & 0x40, swd_parity(*data) ? 0x40 : 0x00);
-
-    return success;
-}
-/******************************************************************************/
-Error swd_write(ftdi_context & ftdi,
-		int address,
-		bool debug_port,
-		uint32 data)
-{
-    bool	parity     = swd_parity(data);
-    uint8	commands[] =
-    {
-	// Write SWD header
-	MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, 7,
-	swd_request(address, debug_port, true),
-	// Turn the bidirectional data line around
-	SET_BITS_LOW, state_idle, direction_read,
-	// And clock out one bit
-	CLK_BITS, 0,
-	// Now read in the target response
-	MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, 2,
-	// Turn the bidirectional data line back to an output
-	SET_BITS_LOW, state_idle, direction_write,
-	// And clock out one bit
-	CLK_BITS, 0,
-	// Then write the data
-	MPSSE_DO_WRITE | MPSSE_LSB, 0x03, 0x00,
-	(data >>  0) & 0xff,
-	(data >>  8) & 0xff,
-	(data >> 16) & 0xff,
-	(data >> 24) & 0xff,
-	// And finally write the parity bit
-	MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, 0, parity ? 0xff : 0x00,
-    };
-
-    uint8	response[1] = {0};
-
-    Check(mpsse_write(ftdi, commands, sizeof(commands)));
-    Check(mpsse_read (ftdi, response, sizeof(response), 1000));
-
-    CheckEQ(response[0] >> 5, 0x1);
-
-    return success;
-}
-/******************************************************************************/
-Error swd_read_idcode(ftdi_context & ftdi, uint32 * idcode)
-{
-    Check(swd_read(ftdi, 0x00, true, idcode));
-
-    return success;
-}
-/******************************************************************************/
-Error swd_read_ctrl_stat(ftdi_context & ftdi, uint32 * ctrl_stat)
-{
-    Check(swd_read(ftdi, 0x01, true, ctrl_stat));
-
-    return success;
-}
-/******************************************************************************/
-Error swd_write_ctrl_stat(ftdi_context & ftdi, uint32 ctrl_stat)
-{
-    Check(swd_write(ftdi, 0x01, true, ctrl_stat));
-
-    return success;
-}
-/******************************************************************************/
-Error swd_read_rdbuff(ftdi_context & ftdi, uint32 * rdbuff)
-{
-    Check(swd_read(ftdi, 0x03, true, rdbuff));
-
-    return success;
-}
-/******************************************************************************/
-Error swd_write_select(ftdi_context & ftdi, uint32 select)
-{
-    Check(swd_write(ftdi, 0x02, true, select));
-
-    return success;
-}
-/******************************************************************************/
-Error swd_write_abort(ftdi_context & ftdi, uint32 abort)
-{
-    Check(swd_write(ftdi, 0x00, true, abort));
-
-    return success;
-}
-/******************************************************************************/
-Error swd_initialize(ftdi_context & ftdi)
-{
-    uint32	idcode = 0;
-
-    Check(target_reset(ftdi));
-    Check(swd_reset(ftdi));
-    Check(swd_read_idcode(ftdi, &idcode));
-
-    debug(1, "Debug Port ID code: %08X", idcode);
-    debug(1, "  Version:  %X", idcode >> 28);
-    debug(1, "  PARTNO:   %04X", (idcode >> 12) & 0xFFFF);
-    {
-      uint8 jep106_continuation = (idcode >> 8) & 0xF;
-      uint8 jep106_identity = (idcode >> 1) & 0x7F;
-
-      debug(1, "  Designer: %X:%02X%s", jep106_continuation,
-                                        jep106_identity,
-              (jep106_continuation == 4 && jep106_identity == 0x3B)?
-                " (ARM Ltd)" : "");
-    }
-
-    uint32 ctrl_stat = 0;
-    Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
-
-    debug(1, "Initial Debug Port CTRL/STAT: %08X", ctrl_stat);
-
-    if (ctrl_stat & (1 << 5))  // Sticky Error
-    {
-      debug(1, "  Clearing STKERR");
-      Check(swd_write_abort(ftdi, 1 << 2));
-    }
-
-    // Turn on power to the debug systems.
-    Check(swd_write_ctrl_stat(ftdi, (1 << 30)  // CSYSPWRUPREQ
-                                  | (1 << 28)  // CDBGPWRUPREQ
-                                 ));
-
-    Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
-    debug(1, "New Debug Port CTRL/STAT: %08X", ctrl_stat);
-
-    for (uint32 ap = 0; ap < 256; ++ap)
-    {
-      debug(2, "Selecting AP %02X...", ap);
-      Check(swd_write_select(ftdi, (ap << 24) | (0xF << 4)));
-
-      Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
-      debug(2, "Debug Port CTRL/STAT: %08X", ctrl_stat);
-
-      uint32 idr;
-      Check(swd_read(ftdi, 0x3, false, &idr));
-      Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
-
-      debug(2, "Debug Port CTRL/STAT: %08X", ctrl_stat);
-      if (ctrl_stat & (1 << 5))  // Sticky Error
-      {
-        debug(2, "  Clearing STKERR");
-        Check(swd_write_abort(ftdi, 1 << 2));
-        Check(swd_read(ftdi, 0x3, false, &idr));
-        Check(swd_read_ctrl_stat(ftdi, &ctrl_stat));
-        debug(2, "Debug Port CTRL/STAT: %08X", ctrl_stat);
-      } else {
-        Check(swd_read_rdbuff(ftdi, &idr));
-        if (idr != 0) {
-          debug(1, "AP %02X IDR = %08X", ap, idr);
-          debug(1, "  Revision: %X", idr >> 28);
-          uint8 jep106_continuation = (idr >> 24) & 0xF;
-          uint8 jep106_identity = (idr >> 17) & 0x7F;
-          debug(1, "  JEP106 ID: %X:%02X", jep106_continuation,
-                                           jep106_identity);
-          debug(1, "  Class: %X%s", (idr >> 16) & 1,
-              (idr >> 16) & 1 ? " (Memory Access Port)" : "");
-          uint8 id = idr & 0xFF;
-          debug(1, "  ID: %02X", id);
-
-          if (jep106_continuation == 0x4 && jep106_identity == 0x3B)
-          {
-            // ARM Ltd. Part
-            switch (id & 0xF)
-            {
-              case 0x00:
-                debug(1, "  Type: JTAG Connection (0)");
-                break;
-
-              case 0x01:
-                debug(1, "  Type: AMBA AHB Bus (1)");
-                break;
-
-              case 0x02:
-                debug(1, "  Type: AMBA APB bus (1)");
-                break;
-
-              default:
-                debug(1, "  Type: Unexpected/unknown (%X)", id & 0xF);
-                break;
-            }
-
-            debug(1, "  Variant: %X", id >> 4);
-          }
-
-          if ((idr >> 16) & 1)
-          {
-            // Memory access port
-            Check(swd_write_select(ftdi, (ap << 24) | (0 << 4)));  // Bank!
-
-            Check(swd_write(ftdi, 0, false, 2));  // Clear status bits
-            Check(swd_write(ftdi, 1, false, 0));  // Set transfer address to 0
-
-            uint32 mem = 0;
-            Check(swd_read(ftdi, 3, false, &mem));  // Start data transfer
-            Check(swd_read_rdbuff(ftdi, &mem));  // Get result
-            debug(1, "  First word of memory: %08X", mem);
-          }
-        }
-      }
-    }
-    return success;
-}
-/******************************************************************************/
 Error error_main(int argc, char const ** argv)
 {
     Error		check_error = success;
@@ -525,7 +266,10 @@ Error error_main(int argc, char const ** argv)
     CheckCleanup(mpsse_setup(ftdi), mpsse_failed);
     CheckCleanup(flash_leds(ftdi), leds_failed);
 
-    CheckCleanup(swd_initialize(ftdi), initialize_failed);
+    {
+      SWDInterface swd(&ftdi);
+      CheckCleanup(swd.initialize(), initialize_failed);
+    }
 
   initialize_failed:
   leds_failed:
