@@ -269,6 +269,10 @@ Error error_main(int argc, char const ** argv)
     {
       SWDInterface swd(&ftdi);
       CheckCleanup(swd.initialize(), initialize_failed);
+      {
+        DebugAccessPort dap(&swd);
+        CheckCleanup(dap.reset_state(), initialize_failed);
+      }
     }
 
   initialize_failed:

@@ -14,21 +14,6 @@ class SWDInterface {
   ftdi_context *_ftdi;
 
 public:
-  enum DebugRegister {
-    /*
-     * The register IDs used here are word addresses.  The ARM ADI docs use
-     * byte addresses, so to find these addresses in the ADI docs, multiply by
-     * four.
-     */
-    kDPABORT = 0x00,   // Write-only
-    kDPIDCODE = 0x00,  // Read-only
-    kDPCTRLSTAT = 0x01,  // Only available when SELECT.CTRLSEL=0
-    kDPWCR = 0x01,       // Only available when SELECT.CTRLSEL=1
-    kDPSELECT = 0x02,  // Write-only
-    kDPRESEND = 0x02,  // Read-only
-    kDPRDBUFF = 0x03,  // Read-only
-  };
-
   SWDInterface(ftdi_context *);
 
   /*
@@ -60,18 +45,70 @@ public:
   Err::Error reset_swd();
 
   /*
-   * Reads a 32-bit register from the Debug Port.  Note that some registers can
-   * only be read in particular states of the SELECT.CTRLSEL bit, and some
+   * Reads a 32-bit register from either the Debug Port (debug_port=true) or the
+   * current bank of the currently selected Access Port (debug_port=false).
+   * Note that some registers can only be read in particular states, and some
    * registers can't be read at all.
    */
-  Err::Error read_dp(DebugRegister, uint32_t *data);
+  Err::Error read(int address, bool debug_port, uint32_t *data);
 
   /*
-   * Writes a 32-bit word into a register in the Debug Port.  Note that some
-   * registers can only be written in particular states of the SELECT.CTRLSEL
-   * bit, and some registers can't be written at all.
+   * Writes a 32-bit word into a register in either the Debug Port
+   * (debug_port=true) or the current bank of the currently selected Access
+   * Port (debug_port=false).  Note that some registers can only be written in
+   * particular states, and some registers can't be written at all.
    */
-  Err::Error write_dp(DebugRegister, uint32_t data);
+  Err::Error write(int address, bool debug_port, uint32_t data);
+};
+
+
+class DebugAccessPort {
+  SWDInterface &_swd;
+
+public:
+  enum DebugRegister {
+    /*
+     * The register IDs used here are word addresses.  The ARM ADI docs use
+     * byte addresses, so to find these addresses in the ADI docs, multiply by
+     * four.
+     */
+    kDPABORT = 0x00,   // Write-only
+    kDPIDCODE = 0x00,  // Read-only
+    kDPCTRLSTAT = 0x01,  // Only available when SELECT.CTRLSEL=0
+    kDPWCR = 0x01,       // Only available when SELECT.CTRLSEL=1
+    kDPSELECT = 0x02,  // Write-only
+    kDPRESEND = 0x02,  // Read-only
+    kDPRDBUFF = 0x03,  // Read-only
+  };
+
+  DebugAccessPort(SWDInterface *swd);
+
+  /*
+   * Raw access to DP registers.
+   */
+
+  Err::Error read_idcode(uint32_t *);
+  Err::Error write_abort(uint32_t);
+  Err::Error read_ctrlstat_wcr(uint32_t *);
+  Err::Error write_ctrlstat_wcr(uint32_t);
+  Err::Error write_select(uint32_t);
+  Err::Error read_resend(uint32_t *);
+  Err::Error read_rdbuff(uint32_t *);
+
+  /*
+   * Slightly more pleasant access to DP registers.
+   */
+
+  /*
+   * Resets the Debug Port to a known state, erasing any leftover effects of
+   * previous sessions:
+   *  - Resets SELECT to reveal the CTRL/STAT register and select the first bank
+   *    of Access Port 0.
+   *  - Clears the STKERR bit in CTRL/STAT to recover from faults.
+   *  - Switches on power to the debug systems (required to interact with
+   *    Access Ports).
+   */
+  Err::Error reset_state();
 
   /*
    * Posts a read of one of the four AP registers within the current bank of the
@@ -90,22 +127,6 @@ public:
    * register.
    */
   Err::Error write_ap_in_bank(int address, uint32_t data);
-
-  /*
-   * The functions below are simply handy shorthand for accessing Debug Port
-   * registers.  They're defined in terms of the functions above.
-   *
-   * Using these functions consistently can help avoid accidentally writing to
-   * a read-only register, or vice versa.
-   */
-  Err::Error read_dp_idcode(uint32_t *);
-  Err::Error write_dp_abort(uint32_t);
-  Err::Error read_dp_ctrlstat_wcr(uint32_t *);
-  Err::Error write_dp_ctrlstat_wcr(uint32_t);
-  Err::Error write_dp_select(uint32_t);
-  Err::Error read_dp_resend(uint32_t *);
-  Err::Error read_dp_rdbuff(uint32_t *);
-
 };
 
 #endif  // SWD_INTERFACE_H

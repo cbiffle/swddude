@@ -114,87 +114,6 @@ Error mpsse_transaction(ftdi_context *ftdi,
   return Err::timeout;
 }
 
-Error swd_read(ftdi_context *ftdi, int addr, bool debug_port, uint32_t *data) {
-  uint8_t commands[] = {
-    // Send SWD request byte
-    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
-        swd_request(addr, debug_port, false),
-
-    // Release the bus and clock out a turnaround bit.
-    SET_BITS_LOW, kStateIdle, kDirRead,
-    CLK_BITS, FTL(1),
-
-    // Read in the response, data, and parity bitfields.
-    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
-    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB, FTL(4), FTH(4),
-    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(2),
-
-    // Take the bus back and clock out a turnaround bit.
-    SET_BITS_LOW, kStateIdle, kDirWrite,
-    CLK_BITS, FTL(1),
-  };
-
-  uint8_t response[6];
-  // response[0]: the three-bit response, MSB-justified.
-  // response[4:1]: the 32-bit response word.
-  // response[5]: the parity bit in bit 6, turnaround (ignored) in bit 7.
-  Check(mpsse_transaction(ftdi, commands, sizeof(commands),
-                                response, sizeof(response),
-                                1000));
-
-  uint8_t ack = response[0] >> 5;
-  CheckEQ(ack, 0x1);  // Require an OK response from the target.
-
-  // Check for parity error.
-  uint32_t data_temp = response[1]
-                     | response[2] << 8
-                     | response[3] << 16
-                     | response[4] << 24;
-  uint8_t parity = (response[5] >> 6) & 1;
-  CheckEQ(parity, swd_parity(data_temp));
-  
-  // All is well!
-  *data = data_temp;
-  return success;
-}
-
-Error swd_write(ftdi_context *ftdi, int addr, bool debug_port, uint32_t data) {
-  uint8_t commands[] = {
-    // Write request byte.
-    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
-        swd_request(addr, debug_port, true),
-    // Release the bus and clock out a turnaround bit.
-    SET_BITS_LOW, kStateIdle, kDirRead,
-    CLK_BITS, FTL(1),
-
-    // Read response.
-    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
-
-    // Take the bus back and clock out a turnaround bit.
-    SET_BITS_LOW, kStateIdle, kDirWrite,
-    CLK_BITS, FTL(1),
-
-    // Send the data word.
-    MPSSE_DO_WRITE | MPSSE_LSB, FTL(4), FTH(4),
-    (data >>  0) & 0xFF,
-    (data >>  8) & 0xFF,
-    (data >> 16) & 0xFF,
-    (data >> 24) & 0xFF,
-    // Send the parity bit.
-    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(1),
-        swd_parity(data) ? 0xFF : 0x00,
-  };
-
-  uint8_t response[1];
-  Check(mpsse_transaction(ftdi, commands, sizeof(commands),
-                                response, sizeof(response),
-                                1000));
-  
-  uint8_t ack = response[0] >> 5;
-  CheckEQ(ack, 0x1);  // Require OK response.
-
-  return success;
-}
 
 }  // un-named namespace for implementation factors
 
@@ -207,7 +126,7 @@ Error SWDInterface::initialize() {
   Check(reset_swd());
 
   uint32_t idcode;
-  Check(read_dp_idcode(&idcode));
+  Check(read(DebugAccessPort::kDPIDCODE, true, &idcode));
 
   uint32_t version = idcode >> 28;
   uint32_t partno = (idcode >> 12) & 0xFFFF;
@@ -254,45 +173,128 @@ Error SWDInterface::reset_swd() {
   return success;
 }
 
+Error SWDInterface::read(int addr, bool debug_port, uint32_t *data) {
+  uint8_t commands[] = {
+    // Send SWD request byte
+    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
+        swd_request(addr, debug_port, false),
 
-Error SWDInterface::read_dp(DebugRegister addr, uint32_t *data) {
-  return swd_read(_ftdi, addr, true, data);
+    // Release the bus and clock out a turnaround bit.
+    SET_BITS_LOW, kStateIdle, kDirRead,
+    CLK_BITS, FTL(1),
+
+    // Read in the response, data, and parity bitfields.
+    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
+    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB, FTL(4), FTH(4),
+    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(2),
+
+    // Take the bus back and clock out a turnaround bit.
+    SET_BITS_LOW, kStateIdle, kDirWrite,
+    CLK_BITS, FTL(1),
+  };
+
+  uint8_t response[6];
+  // response[0]: the three-bit response, MSB-justified.
+  // response[4:1]: the 32-bit response word.
+  // response[5]: the parity bit in bit 6, turnaround (ignored) in bit 7.
+  Check(mpsse_transaction(_ftdi, commands, sizeof(commands),
+                                 response, sizeof(response),
+                                 1000));
+
+  uint8_t ack = response[0] >> 5;
+  CheckEQ(ack, 0x1);  // Require an OK response from the target.
+
+  // Check for parity error.
+  uint32_t data_temp = response[1]
+                     | response[2] << 8
+                     | response[3] << 16
+                     | response[4] << 24;
+  uint8_t parity = (response[5] >> 6) & 1;
+  CheckEQ(parity, swd_parity(data_temp));
+  
+  // All is well!
+  *data = data_temp;
+  return success;
 }
 
-Error SWDInterface::write_dp(DebugRegister addr, uint32_t data) {
-  return swd_write(_ftdi, addr, true, data);
+Error SWDInterface::write(int addr, bool debug_port, uint32_t data) {
+  uint8_t commands[] = {
+    // Write request byte.
+    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
+        swd_request(addr, debug_port, true),
+    // Release the bus and clock out a turnaround bit.
+    SET_BITS_LOW, kStateIdle, kDirRead,
+    CLK_BITS, FTL(1),
+
+    // Read response.
+    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
+
+    // Take the bus back and clock out a turnaround bit.
+    SET_BITS_LOW, kStateIdle, kDirWrite,
+    CLK_BITS, FTL(1),
+
+    // Send the data word.
+    MPSSE_DO_WRITE | MPSSE_LSB, FTL(4), FTH(4),
+    (data >>  0) & 0xFF,
+    (data >>  8) & 0xFF,
+    (data >> 16) & 0xFF,
+    (data >> 24) & 0xFF,
+    // Send the parity bit.
+    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(1),
+        swd_parity(data) ? 0xFF : 0x00,
+  };
+
+  uint8_t response[1];
+  Check(mpsse_transaction(_ftdi, commands, sizeof(commands),
+                                 response, sizeof(response),
+                                 1000));
+  
+  uint8_t ack = response[0] >> 5;
+  CheckEQ(ack, 0x1);  // Require OK response.
+
+  return success;
 }
 
 
 /*
- * Implementation of utilities.
+ * Implementation of DebugAccessPort.
  */
 
-Error SWDInterface::read_dp_idcode(uint32_t *data) {
-  return read_dp(kDPIDCODE, data);
+DebugAccessPort::DebugAccessPort(SWDInterface *swd) : _swd(*swd) {}
+
+Error DebugAccessPort::read_idcode(uint32_t *data) {
+  return _swd.read(kDPIDCODE, true, data);
 }
 
-Error SWDInterface::write_dp_abort(uint32_t data) {
-  return write_dp(kDPABORT, data);
+Error DebugAccessPort::write_abort(uint32_t data) {
+  return _swd.write(kDPABORT, true, data);
 }
 
-Error SWDInterface::read_dp_ctrlstat_wcr(uint32_t *data) {
-  return read_dp(kDPCTRLSTAT, data);
+Error DebugAccessPort::read_ctrlstat_wcr(uint32_t *data) {
+  return _swd.read(kDPCTRLSTAT, true, data);
 }
 
-Error SWDInterface::write_dp_ctrlstat_wcr(uint32_t data) {
-  return write_dp(kDPCTRLSTAT, data);
+Error DebugAccessPort::write_ctrlstat_wcr(uint32_t data) {
+  return _swd.write(kDPCTRLSTAT, true, data);
 }
 
-Error SWDInterface::write_dp_select(uint32_t data) {
-  return write_dp(kDPSELECT, data);
+Error DebugAccessPort::write_select(uint32_t data) {
+  return _swd.write(kDPSELECT, true, data);
 }
 
-Error SWDInterface::read_dp_resend(uint32_t *data) {
-  return read_dp(kDPRESEND, data);
+Error DebugAccessPort::read_resend(uint32_t *data) {
+  return _swd.read(kDPRESEND, true, data);
 }
 
-Error SWDInterface::read_dp_rdbuff(uint32_t *data) {
-  return read_dp(kDPRDBUFF, data);
+Error DebugAccessPort::read_rdbuff(uint32_t *data) {
+  return _swd.read(kDPRDBUFF, true, data);
+}
+
+Error DebugAccessPort::reset_state() {
+  Check(write_select(0));  // Reset SELECT.
+  Check(write_abort(1 << 2));  // Clear STKERR.
+  Check(write_ctrlstat_wcr((1 << 30)     // CSYSPWRUPREQ
+                         | (1 << 28)));  // CDBGPWRUPREQ
+  return success;
 }
 
