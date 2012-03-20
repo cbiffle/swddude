@@ -75,3 +75,23 @@ Error Target::read_words(uint32_t target_addr,
 
   return success;
 }
+
+Error Target::write_words(void const *host_buffer, uint32_t target_addr,
+                          size_t count) {
+  uint32_t const *host_buffer_as_words =
+      static_cast<uint32_t const *>(host_buffer);
+
+  // Configure MEM-AP for auto-incrementing 32-bit transactions.
+  Check(write_ap(kMEMAP_CSW, (1 << 4) | 2));
+  
+  // Load Transfer Address Register with first address.
+  Check(write_ap(kMEMAP_TAR, target_addr));
+
+  for (size_t i = 0; i < count; ++i) {
+    Check(write_ap(kMEMAP_DRW, host_buffer_as_words[i]));
+  }
+
+  return success;
+}
+
+

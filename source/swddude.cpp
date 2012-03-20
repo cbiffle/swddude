@@ -455,6 +455,12 @@ Error enumerate_access_ports(ftdi_context &ftdi) {
     notice(" %08X: %08X", i * 4, buffer[i]);
   }
 
+  uint32_t special_value = 0xDEADBEEF;
+  Check(target.write_words(&special_value, 0x10000000, 1));
+  special_value = 0;
+  Check(target.read_words(0x10000000, &special_value, 1));
+  notice("Wrote word %08X", special_value);
+
   for (uint32_t i = 0; i < 256; ++i) {
     AccessPort ap(&dap, i);
     
