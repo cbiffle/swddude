@@ -122,7 +122,6 @@ SWDInterface::SWDInterface(ftdi_context *ftdi) : _ftdi(ftdi) {}
 
 
 Error SWDInterface::initialize() {
-  Check(reset_target());
   Check(reset_swd());
 
   uint32_t idcode;
