@@ -25,6 +25,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "target.h"
 #include "swd_interface.h"
 
 #include "libs/error/error_stack.h"
@@ -444,6 +445,15 @@ Error enumerate_access_ports(ftdi_context &ftdi) {
 
   DebugAccessPort dap(&swd);
   Check(dap.reset_state());
+
+  uint32_t buffer[32];
+  Target target(&dap, 0);
+  Check(target.initialize());
+  Check(target.read_words(0, buffer, 32));
+  notice("First 32 words of target memory:");
+  for (int i = 0; i < 32; ++i) {
+    notice(" %08X: %08X", i * 4, buffer[i]);
+  }
 
   for (uint32_t i = 0; i < 256; ++i) {
     AccessPort ap(&dap, i);
