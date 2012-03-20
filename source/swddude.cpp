@@ -449,6 +449,16 @@ Error run_experiment(ftdi_context &ftdi) {
   uint32_t buffer[32];
   Target target(&dap, 0);
   Check(target.initialize());
+  Check(target.enable_halting_debug());
+  Check(target.halt());
+
+  for (int r = Target::kR0; r <= Target::kRLast; ++r) {
+    if (!target.is_register_implemented(r)) continue;
+    uint32_t value;
+    Check(target.read_register(Target::RegisterNumber(r), &value));
+    notice(" r%u = %08X", r, value);
+  }
+
   Check(target.read_words(0, buffer, 32));
   notice("First 32 words of target memory:");
   for (int i = 0; i < 32; ++i) {
@@ -461,6 +471,9 @@ Error run_experiment(ftdi_context &ftdi) {
   Check(target.read_words(0x10000000, &special_value, 1));
   notice("Wrote word %08X", special_value);
 
+  Check(target.resume());
+
+  /*
   for (uint32_t i = 0; i < 256; ++i) {
     AccessPort ap(&dap, i);
     
@@ -478,6 +491,7 @@ Error run_experiment(ftdi_context &ftdi) {
       debug(1, "Unknown AP type.");
     }
   }
+  */
 
   return success;
 }
