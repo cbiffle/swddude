@@ -104,7 +104,7 @@ Error mpsse_transaction(ftdi_context *ftdi,
                                          response_count - count));
 
     if (count >= response_count) {
-      debug(2, "Response took %d attempts.", i);
+      debug(3, "Response took %d attempts.", i);
       return success;
     }
 

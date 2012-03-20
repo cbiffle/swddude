@@ -439,59 +439,165 @@ Error crawl_memory_ap(AccessPort &ap) {
   return crawl_unknown_peripheral(ap, regfile);
 }
 /******************************************************************************/
+static uint8_t const program[] = {
+0xf0, 0x1f, 0x00, 0x10, 0x41, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x12, 0xde, 
+0xff, 0xef, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 
+0x59, 0x00, 0x00, 0x00, 0x08, 0x4c, 0x80, 0x25, 0x00, 0x26, 0x25, 0x60, 0x07, 0x4c, 0x25, 0x60, 0x00, 0xf0, 0x05, 0xf8, 0x26, 0x60, 0x00, 0xf0, 0x02, 0xf8, 0xf8, 0xe7, 0xfe, 0xe7, 
+0x04, 0x48, 0x01, 0x38, 0xfd, 0xd1, 0x70, 0x47, 0x00, 0x00, 0x00, 0x80, 0x00, 0x50, 0xfc, 0x3f, 0x00, 0x50, 0x00, 0x00, 0x10, 0x00, 
+
+};
+/******************************************************************************/
+Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_table) {
+  Check(target.write_register(Target::kR0, param_table));
+  Check(target.write_register(Target::kR1, result_table));
+  Check(target.write_register(Target::kRDebugReturn, 0x1FFF1FF0));
+
+  // Tell the CPU to return into RAM, and catch it there with a breakpoint.
+  Check(target.write_register(Target::kRLink, param_table | 1));
+  Check(target.enable_breakpoint(0, param_table));
+
+  Check(target.reset_halt_state());
+
+  debug(2, "Invoking IAP function...");
+  Check(target.resume());
+  bool halted = false;
+  uint32_t attempts = 0;
+  do {
+    Check(target.is_halted(&halted));
+    usleep(1000);
+  } while (++attempts < 100 && !halted);
+
+  uint32_t reason;
+  Check(target.read_halt_state(&reason));
+  if (reason & Target::kHaltBkpt) {
+    return success;
+  }
+
+  if (!reason) {
+    warning("Target did not halt (or resume)");
+    Check(target.halt());
+    uint32_t pc;
+    Check(target.read_register(Target::kR15, &pc));
+    warning("Target forceably halted at %08X", pc);
+
+    uint32_t icsr;
+    Check(target.read_word(0xE000ED04, &icsr));
+    warning("ICSR = %08X", icsr);
+  } else {
+    uint32_t pc;
+    Check(target.read_register(Target::kR15, &pc));
+    warning("Target halted for unexpected reason at %08X", pc);
+  }
+  return success;
+}
+/******************************************************************************/
+Error unmap_boot_sector(Target &target) {
+  return target.write_word(0x40048000, 2);
+}
+/******************************************************************************/
+Error program_flash(Target &target, void const *program, size_t word_count) {
+  // Only support single-sector writes for now.
+  if (word_count > (256 / sizeof(uint32_t))) return argument_error;
+
+  uint32_t iap_table = 0x10000000;
+  uint32_t ram_buffer = 0x10000100;
+
+  // Prepare a copy of the program in RAM.
+  Check(target.write_words(program, ram_buffer, word_count));
+ 
+  // Ensure that the boot Flash isn't visible (will mess us up).
+  Check(unmap_boot_sector(target));
+
+  // Unprotect the bottom sector of Flash.
+  debug(1, "Unprotecting Flash...");
+  Check(target.write_word(iap_table + 0, 50));
+  Check(target.write_word(iap_table + 4, 0));
+  Check(target.write_word(iap_table + 8, 0));
+  Check(invoke_iap(target, iap_table, iap_table));
+  uint32_t iap_result;
+  Check(target.read_word(iap_table + 0, &iap_result));
+  CheckEQ(iap_result, 0);
+
+  // Erase the bottom sector of Flash.
+  debug(1, "Erasing...");
+  Check(target.write_word(iap_table +  0, 52));
+  Check(target.write_word(iap_table +  4, 0));
+  Check(target.write_word(iap_table +  8, 0));
+  Check(target.write_word(iap_table + 12, 12000));
+  Check(invoke_iap(target, iap_table, iap_table));
+  Check(target.read_word(iap_table + 0, &iap_result));
+  CheckEQ(iap_result, 0);
+
+  // Unprotect it, again.
+  debug(1, "Unprotecting Flash - again...");
+  Check(target.write_word(iap_table + 0, 50));
+  Check(target.write_word(iap_table + 4, 0));
+  Check(target.write_word(iap_table + 8, 0));
+  Check(invoke_iap(target, iap_table, iap_table));
+  Check(target.read_word(iap_table + 0, &iap_result));
+  CheckEQ(iap_result, 0);
+
+  for (uint32_t i = ram_buffer; i < ram_buffer + (word_count * 4); i += 4) {
+    uint32_t x;
+    Check(target.read_word(i, &x));
+    debug(2, "[%08X] = %08X", i, x);
+  }
+   // Copy program into Flash.
+  debug(1, "Copying program into Flash...");
+  Check(target.write_word(iap_table +  0, 51));
+  Check(target.write_word(iap_table +  4, 0));
+  Check(target.write_word(iap_table +  8, ram_buffer));
+  Check(target.write_word(iap_table + 12, 256));
+  Check(target.write_word(iap_table + 16, 12000));
+  Check(invoke_iap(target, iap_table, iap_table));
+  Check(target.read_word(iap_table + 0, &iap_result));
+  CheckEQ(iap_result, 0);
+
+  return success;
+}
+/******************************************************************************/
+Error dump_flash(Target &target) {
+  uint32_t buffer[256 / sizeof(uint32_t)];
+  Check(target.read_words(0, buffer, sizeof(buffer) / sizeof(buffer[0])));
+
+  notice("Contents of Flash:");
+  for (unsigned i = 0; i < (256 / sizeof(uint32_t)); ++i) {
+    notice(" [%08X] %08X", i * 4, buffer[i]);
+  }
+
+  return success;
+}
+/******************************************************************************/
 Error run_experiment(ftdi_context &ftdi) {
   SWDInterface swd(&ftdi);
   Check(swd.initialize());
+  Check(swd.reset_target());
 
   DebugAccessPort dap(&swd);
   Check(dap.reset_state());
 
-  uint32_t buffer[32];
-  Target target(&dap, 0);
+  Target target(&swd, &dap, 0);
   Check(target.initialize());
-  Check(target.enable_halting_debug());
   Check(target.halt());
 
-  for (int r = Target::kR0; r <= Target::kRLast; ++r) {
-    if (!target.is_register_implemented(r)) continue;
-    uint32_t value;
-    Check(target.read_register(Target::RegisterNumber(r), &value));
-    notice(" r%u = %08X", r, value);
+  uint32_t pc;
+  Check(target.read_register(Target::kR15, &pc));
+  debug(1, "Interrupted target at PC = %08X", pc);
+
+  Check(target.enable_breakpoints());
+  size_t breakpoint_count;
+  Check(target.get_breakpoint_count(&breakpoint_count));
+  notice("Target supports %u hardware breakpoints.", (uint32_t) breakpoint_count);
+
+  if (breakpoint_count == 0) {
+    warning("Can't continue!");
+    return success;
   }
 
-  Check(target.read_words(0, buffer, 32));
-  notice("First 32 words of target memory:");
-  for (int i = 0; i < 32; ++i) {
-    notice(" %08X: %08X", i * 4, buffer[i]);
-  }
+  Check(program_flash(target, program, sizeof(program) / sizeof(uint32_t)));
+  Check(dump_flash(target));
 
-  uint32_t special_value = 0xDEADBEEF;
-  Check(target.write_words(&special_value, 0x10000000, 1));
-  special_value = 0;
-  Check(target.read_words(0x10000000, &special_value, 1));
-  notice("Wrote word %08X", special_value);
-
-  Check(target.resume());
-
-  /*
-  for (uint32_t i = 0; i < 256; ++i) {
-    AccessPort ap(&dap, i);
-    
-    Check(ap.post_read(0xFC));
-    uint32_t idr;
-    Check(ap.read_last_result(&idr));
-    
-    if (idr == 0) continue;  // AP not implemented
-
-    debug(1, "AP %02X IDR = %08X", i, idr);
-
-    if (idr & (1 << 16)) {  // Memory Access Port
-      Check(crawl_memory_ap(ap));
-    } else {
-      debug(1, "Unknown AP type.");
-    }
-  }
-  */
+  Check(swd.reset_target());
 
   return success;
 }
@@ -518,6 +624,7 @@ Error error_main(int argc, char const ** argv)
     CheckCleanup(flash_leds(ftdi), leds_failed);
 
     run_experiment(ftdi);
+
 
   leds_failed:
     CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));

@@ -7,8 +7,10 @@
 #include <stddef.h>
 
 class DebugAccessPort;
+class SWDInterface;
 
 class Target {
+  SWDInterface &_swd;
   DebugAccessPort &_dap;
   uint8_t _mem_ap_index;
 
@@ -26,7 +28,7 @@ class Target {
   Err::Error poke32(uint32_t address, uint32_t data);
 
 public:
-  Target(DebugAccessPort *, uint8_t mem_ap_index);
+  Target(SWDInterface *, DebugAccessPort *, uint8_t mem_ap_index);
 
   /*
    * Initializes this object and the debug unit of the remote system.
@@ -49,6 +51,8 @@ public:
    */
   Err::Error read_words(uint32_t target_addr, void *host_buffer, size_t count);
 
+  Err::Error read_word(uint32_t target_addr, uint32_t *data);
+
   /*
    * Reads some number of 32-bit words from the target into memory on the host.
    *
@@ -63,6 +67,8 @@ public:
    */
   Err::Error write_words(void const *host_buffer, uint32_t target_addr,
                           size_t count);
+
+  Err::Error write_word(uint32_t target_addr, uint32_t data);
 
   enum RegisterNumber {
     // Basic numbered registers
@@ -105,19 +111,6 @@ public:
   Err::Error write_register(RegisterNumber, uint32_t);
 
   /*
-   * Enables halting debug.  If halting debug is already enabled, this has no
-   * effect.
-   */
-  Err::Error enable_halting_debug();
-
-  /*
-   * Disables halting debug.  If the processor is currently halted, it will
-   * resume as though resume() had been called.  If halting debug is not
-   * enabled, this has no effect.
-   */
-  Err::Error disable_halting_debug();
-
-  /*
    * Halts the processor.  If the processor is already halted, this has no
    * effect.
    */
@@ -133,6 +126,25 @@ public:
    * Checks whether the processor is halted.
    */
   Err::Error is_halted(bool *);
+
+  enum HaltReason {
+    kHaltPerSe    = 0x1,
+    kHaltBkpt     = 0x2,
+    kHaltDWT      = 0x4,
+    kHaltVCatch   = 0x8,
+    kHaltExternal = 0x10,
+  };
+
+  /*
+   * Finds out why the processor is halted, assuming it's halted.  Bits in the
+   * result are set to a combination of HaltReasons, above.
+   */
+  Err::Error read_halt_state(uint32_t *);
+
+  /*
+   * Clears the sticky halt state flags.
+   */
+  Err::Error reset_halt_state();
 
   /*
    * Issues a local (processor) reset without losing state in the debug unit.
