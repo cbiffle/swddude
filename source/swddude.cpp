@@ -439,7 +439,7 @@ Error crawl_memory_ap(AccessPort &ap) {
   return crawl_unknown_peripheral(ap, regfile);
 }
 /******************************************************************************/
-Error enumerate_access_ports(ftdi_context &ftdi) {
+Error run_experiment(ftdi_context &ftdi) {
   SWDInterface swd(&ftdi);
   Check(swd.initialize());
 
@@ -503,7 +503,7 @@ Error error_main(int argc, char const ** argv)
     CheckCleanup(mpsse_setup(ftdi), mpsse_failed);
     CheckCleanup(flash_leds(ftdi), leds_failed);
 
-    enumerate_access_ports(ftdi);
+    run_experiment(ftdi);
 
   leds_failed:
     CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
