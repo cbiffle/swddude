@@ -20,7 +20,10 @@ class Target {
 
   Err::Error post_read_ap(uint8_t address);
   Err::Error read_ap_pipelined(uint8_t nextAddress, uint32_t *lastData);
-  Err::Error final_read_ap();
+  Err::Error final_read_ap(uint32_t *data);
+
+  Err::Error peek32(uint32_t address, uint32_t *data);
+  Err::Error poke32(uint32_t address, uint32_t data);
 
 public:
   Target(DebugAccessPort *, uint8_t mem_ap_index);
@@ -79,7 +82,15 @@ public:
     kRStack = kR13,
     kRLink  = kR14,
     kRDebugReturn = kR15,
+
+    kRLast = kCONTROL_PRI_MASK,
   };
+
+  /*
+   * Checks whether a register index is valid.
+   */
+  bool is_register_implemented(int r);
+
 
   /*
    * Reads the contents of one of the processor's core or special-purpose
