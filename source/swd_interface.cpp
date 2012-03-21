@@ -91,6 +91,21 @@ bool swd_parity(uint32_t data) {
   return t & 1;
 }
 
+Error setup_buffers(ftdi_context &ftdi) {
+  CheckP(ftdi_usb_purge_buffers(&ftdi));
+
+  CheckP(ftdi_read_data_set_chunksize(&ftdi, 65536));
+  CheckP(ftdi_write_data_set_chunksize(&ftdi, 65536));
+
+  uint32_t read, write;
+  CheckP(ftdi_read_data_get_chunksize(&ftdi, &read));
+  CheckP(ftdi_write_data_get_chunksize(&ftdi, &write));
+
+  debug(1, "Chunksize (r/w): %u/%u", read, write);
+
+  return success;
+}
+
 Error mpsse_transaction(ftdi_context *ftdi,
                         uint8_t *command, size_t command_count,
                         uint8_t *response, size_t response_count,
@@ -114,6 +129,47 @@ Error mpsse_transaction(ftdi_context *ftdi,
   return Err::timeout;
 }
 
+Error mpsse_synchronize(ftdi_context &ftdi) {
+  uint8_t commands[] = { 0xAA };
+  uint8_t response[2];
+
+  Check(mpsse_transaction(&ftdi, commands, sizeof(commands),
+                                 response, sizeof(response),
+                                 1000));
+
+  CheckEQ(response[0], 0xFA);
+  CheckEQ(response[1], 0xAA);
+
+  return success;
+}
+
+Error mpsse_setup(ftdi_context &ftdi) {
+  Check(setup_buffers(ftdi));
+  CheckP(ftdi_set_latency_timer(&ftdi, 1));
+
+  // Switch into MPSSE mode!
+  CheckP(ftdi_set_bitmode(&ftdi, 0x00, BITMODE_RESET));
+  CheckP(ftdi_set_bitmode(&ftdi, 0x00, BITMODE_MPSSE));
+
+  Check(mpsse_synchronize(ftdi));
+
+  // We run the FT232H at 1MHz by dividing down the 60MHz clock by 60.
+  uint8_t commands[] = {
+    DIS_DIV_5,
+    DIS_ADAPTIVE,
+    DIS_3_PHASE,
+
+    EN_3_PHASE,
+    TCK_DIVISOR, FTL(60/2), FTH(60/2),
+    SET_BITS_LOW, kStateIdle, kDirWrite,
+    SET_BITS_HIGH, 0, 0,
+  };
+
+  CheckEQ(ftdi_write_data(&ftdi, commands, sizeof(commands)),
+          sizeof(commands));
+
+  return success;
+}
 
 }  // un-named namespace for implementation factors
 
@@ -122,6 +178,7 @@ SWDInterface::SWDInterface(ftdi_context *ftdi) : _ftdi(ftdi) {}
 
 
 Error SWDInterface::initialize() {
+  Check(mpsse_setup(*_ftdi));
   Check(reset_swd());
 
   uint32_t idcode;
