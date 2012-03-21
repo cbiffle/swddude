@@ -33,6 +33,8 @@
 #include "libs/command_line/command_line.h"
 
 #include <vector>
+#include <iostream>
+#include <fstream>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -41,14 +43,24 @@
 using namespace Err;
 using namespace Log;
 using std::vector;
+using std::ifstream;
+using std::ios;
 
 /******************************************************************************/
 namespace CommandLine
 {
     static Scalar<int>          debug ("debug",  true,  0,
 				       "What level of debug logging to use.");
+    static Scalar<String> file("file", false, "", "Binary program to load");
 
-    static Argument     *arguments[] = { &debug, null };
+    static Scalar<bool> fix_lpc_checksum("fix_lpc_checksum", true, false,
+        "When true, the loader will write the LPC-style checksum.");
+
+    static Argument     *arguments[] = {
+      &debug,
+      &file,
+      &fix_lpc_checksum,
+      null };
 }
 /******************************************************************************/
 Error read_cpuid(AccessPort &ap, uint32_t *cpuid) {
@@ -241,14 +253,6 @@ Error crawl_memory_ap(AccessPort &ap) {
   return crawl_unknown_peripheral(ap, regfile);
 }
 /******************************************************************************/
-static uint8_t const program[] = {
-0xf0, 0x1f, 0x00, 0x10, 0x41, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x12, 0xde, 
-0xff, 0xef, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 
-0x59, 0x00, 0x00, 0x00, 0x08, 0x4c, 0x80, 0x25, 0x00, 0x26, 0x25, 0x60, 0x07, 0x4c, 0x25, 0x60, 0x00, 0xf0, 0x05, 0xf8, 0x26, 0x60, 0x00, 0xf0, 0x02, 0xf8, 0xf8, 0xe7, 0xfe, 0xe7, 
-0x04, 0x48, 0x01, 0x38, 0xfd, 0xd1, 0x70, 0x47, 0x00, 0x00, 0x00, 0x80, 0x00, 0x50, 0xfc, 0x3f, 0x00, 0x50, 0x00, 0x00, 0x10, 0x00, 
-
-};
-/******************************************************************************/
 Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_table) {
   Check(target.write_register(Target::kR0, param_table));
   Check(target.write_register(Target::kR1, result_table));
@@ -396,10 +400,44 @@ Error run_experiment(ftdi_context &ftdi) {
     return success;
   }
 
-  Check(program_flash(target, program, sizeof(program) / sizeof(uint32_t)));
+  ifstream input;
+  input.open(CommandLine::file.get());
+
+  input.seekg(0, ios::end);
+  size_t input_length = input.tellg();
+  input.seekg(0, ios::beg);
+
+  uint8_t *program;
+  Error check_error = success;
+  CheckCleanupEQ(input_length, (input_length / 4) * 4, wrong_size);
+
+  program = new uint8_t[input_length];
+
+  input.read((char *) program, input_length);
+
+  debug(1, "Read program of %u bytes", (unsigned int) input_length);
+
+  if (CommandLine::fix_lpc_checksum.get()) {
+
+    const size_t kCheckedVectors = 7;
+    uint32_t sum = 0;
+    uint32_t *program_words = (uint32_t *) program;
+    for (size_t i = 0; i < kCheckedVectors; ++i) {
+      sum += program_words[i];
+    }
+    sum = 0 - sum;
+    debug(1, "Repairing LPC checksum: %08X", sum);
+    program_words[kCheckedVectors] = sum;
+  }
+
+  Check(program_flash(target, program, input_length / sizeof(uint32_t)));
   Check(dump_flash(target));
 
   Check(swd.reset_target());
+
+wrong_size:
+  input.close();
+  delete[] program;
 
   return success;
 }

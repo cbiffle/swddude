@@ -33,6 +33,7 @@ swddude[type]		:= program
 swddude[cpp_files]	:= swddude.cpp swd_interface.cpp target.cpp
 swddude[libs]		:= error:error
 swddude[libs]		+= log:log
+swddude[libs]		+= files:files
 swddude[libs]		+= command_line:command_line
 swddude[libs]		+= system/ftdi:ftdi
 
