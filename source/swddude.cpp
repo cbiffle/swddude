@@ -303,61 +303,64 @@ Error unmap_boot_sector(Target &target) {
 /******************************************************************************/
 Error program_flash(Target &target, void const *program, size_t word_count) {
   // Only support single-sector writes for now.
-  if (word_count > (256 / sizeof(uint32_t))) return argument_error;
-
   uint32_t iap_table = 0x10000000;
   uint32_t ram_buffer = 0x10000100;
 
-  // Prepare a copy of the program in RAM.
-  Check(target.write_words(program, ram_buffer, word_count));
- 
   // Ensure that the boot Flash isn't visible (will mess us up).
   Check(unmap_boot_sector(target));
 
-  // Unprotect the bottom sector of Flash.
-  debug(1, "Unprotecting Flash...");
+  // Erase affected sectors.  Assumes uniform 4KiB sectors for now.
+  size_t const lastSector = (word_count * sizeof(uint32_t) + 4095) / 4096;
+  // Unprotect affected sectors.
+  debug(1, "Unprotecting Flash sectors 0-%lu...", lastSector);
   Check(target.write_word(iap_table + 0, 50));
   Check(target.write_word(iap_table + 4, 0));
-  Check(target.write_word(iap_table + 8, 0));
+  Check(target.write_word(iap_table + 8, lastSector));
   Check(invoke_iap(target, iap_table, iap_table));
   uint32_t iap_result;
   Check(target.read_word(iap_table + 0, &iap_result));
   CheckEQ(iap_result, 0);
 
-  // Erase the bottom sector of Flash.
+  // Erase affected sectors.
   debug(1, "Erasing...");
   Check(target.write_word(iap_table +  0, 52));
   Check(target.write_word(iap_table +  4, 0));
-  Check(target.write_word(iap_table +  8, 0));
+  Check(target.write_word(iap_table +  8, lastSector));
   Check(target.write_word(iap_table + 12, 12000));
   Check(invoke_iap(target, iap_table, iap_table));
   Check(target.read_word(iap_table + 0, &iap_result));
   CheckEQ(iap_result, 0);
 
-  // Unprotect it, again.
-  debug(1, "Unprotecting Flash - again...");
-  Check(target.write_word(iap_table + 0, 50));
-  Check(target.write_word(iap_table + 4, 0));
-  Check(target.write_word(iap_table + 8, 0));
-  Check(invoke_iap(target, iap_table, iap_table));
-  Check(target.read_word(iap_table + 0, &iap_result));
-  CheckEQ(iap_result, 0);
+  // Copy program to RAM, then to Flash, in 256 byte chunks.
+  for (unsigned block = 0;
+       block < word_count;
+       block += (256 / sizeof(uint32_t))) {
+    size_t block_size = word_count - block;
+    if (block_size > 256) block_size = 256;
 
-  for (uint32_t i = ram_buffer; i < ram_buffer + (word_count * 4); i += 4) {
-    uint32_t x;
-    Check(target.read_word(i, &x));
-    debug(2, "[%08X] = %08X", i, x);
+    debug(1, "Copying %lu words starting with #%u", block_size, block);
+    Check(target.write_words(&program[block], ram_buffer, block_size));
+    // Unprotect the sector.
+    unsigned sector = block / 4096;
+    debug(1, "Unprotecting Flash sector %u", sector);
+    Check(target.write_word(iap_table + 0, 50));
+    Check(target.write_word(iap_table + 4, sector));
+    Check(target.write_word(iap_table + 8, sector));
+    Check(invoke_iap(target, iap_table, iap_table));
+    Check(target.read_word(iap_table + 0, &iap_result));
+    CheckEQ(iap_result, 0);
+
+    // Copy block to Flash
+    debug(1, "Writing Flash...");
+    Check(target.write_word(iap_table +  0, 51));
+    Check(target.write_word(iap_table +  4, block * sizeof(uint32_t)));
+    Check(target.write_word(iap_table +  8, ram_buffer));
+    Check(target.write_word(iap_table + 12, 256));
+    Check(target.write_word(iap_table + 16, 12000));
+    Check(invoke_iap(target, iap_table, iap_table));
+    Check(target.read_word(iap_table + 0, &iap_result));
+    CheckEQ(iap_result, 0);
   }
-   // Copy program into Flash.
-  debug(1, "Copying program into Flash...");
-  Check(target.write_word(iap_table +  0, 51));
-  Check(target.write_word(iap_table +  4, 0));
-  Check(target.write_word(iap_table +  8, ram_buffer));
-  Check(target.write_word(iap_table + 12, 256));
-  Check(target.write_word(iap_table + 16, 12000));
-  Check(invoke_iap(target, iap_table, iap_table));
-  Check(target.read_word(iap_table + 0, &iap_result));
-  CheckEQ(iap_result, 0);
 
   return success;
 }
