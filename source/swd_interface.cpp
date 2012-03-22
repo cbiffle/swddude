@@ -230,7 +230,7 @@ Error SWDInterface::reset_swd() {
 }
 
 Error SWDInterface::read(int addr, bool debug_port, uint32_t *data) {
-  uint8_t commands[] = {
+  uint8_t commands1[] = {
     // Send SWD request byte
     MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
         swd_request(addr, debug_port, false),
@@ -239,42 +239,72 @@ Error SWDInterface::read(int addr, bool debug_port, uint32_t *data) {
     SET_BITS_LOW, kStateIdle, kDirRead,
     CLK_BITS, FTL(1),
 
-    // Read in the response, data, and parity bitfields.
+    // Read in the response.
     MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
+  };
+
+  uint8_t commands2[] = {
+    // Read in the data and parity fields.
     MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB, FTL(4), FTH(4),
     MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(2),
+  };
 
+  uint8_t commands3[] = {
     // Take the bus back and clock out a turnaround bit.
     SET_BITS_LOW, kStateIdle, kDirWrite,
     CLK_BITS, FTL(1),
   };
 
+
   uint8_t response[6];
-  // response[0]: the three-bit response, MSB-justified.
+
+  uint8_t ack = 0;
+  for (int retry = 0; retry < 100; ++retry) {
+    // response[0]: the three-bit response, MSB-justified.
+    Check(mpsse_transaction(_ftdi, commands1, sizeof(commands1),
+                                   response, 1,
+                                   1000));
+    ack = response[0] >> 5;
+
+    if (ack != 0x2) break;
+
+    debug(3, "SWD read got response %u, retrying...", ack);
+    usleep(10000);
+  }
+
+  Error check_error = success;
+  CheckCleanupEQ(ack, 0x1, reset_link);
+
   // response[4:1]: the 32-bit response word.
   // response[5]: the parity bit in bit 6, turnaround (ignored) in bit 7.
-  Check(mpsse_transaction(_ftdi, commands, sizeof(commands),
-                                 response, sizeof(response),
+  Check(mpsse_transaction(_ftdi, commands2, sizeof(commands2),
+                                 response + 1, sizeof(response) - 1,
                                  1000));
 
-  uint8_t ack = response[0] >> 5;
-  CheckEQ(ack, 0x1);  // Require an OK response from the target.
-
-  // Check for parity error.
-  uint32_t data_temp = response[1]
-                     | response[2] << 8
-                     | response[3] << 16
-                     | response[4] << 24;
-  uint8_t parity = (response[5] >> 6) & 1;
-  CheckEQ(parity, swd_parity(data_temp));
-  
-  // All is well!
-  if (data) *data = data_temp;
-  return success;
+  {
+    // Check for parity error.
+    uint32_t data_temp = response[1]
+                       | response[2] << 8
+                       | response[3] << 16
+                       | response[4] << 24;
+    uint8_t parity = (response[5] >> 6) & 1;
+    CheckEQ(parity, swd_parity(data_temp));
+    debug(3, "SWD read (%X, %d) = %08X complete with status %d",
+        addr, debug_port, data_temp, ack);
+    // All is well!
+    if (data) *data = data_temp;
+  }
+ 
+reset_link:
+  if (check_error != success) {
+    debug(3, "SWD error %d; taking link back", ack);
+  }
+  Check(mpsse_transaction(_ftdi, commands3, sizeof(commands3), 0, 0, 1000));
+  return check_error;
 }
 
 Error SWDInterface::write(int addr, bool debug_port, uint32_t data) {
-  uint8_t commands[] = {
+  uint8_t commands1[] = {
     // Write request byte.
     MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
         swd_request(addr, debug_port, true),
@@ -288,7 +318,9 @@ Error SWDInterface::write(int addr, bool debug_port, uint32_t data) {
     // Take the bus back and clock out a turnaround bit.
     SET_BITS_LOW, kStateIdle, kDirWrite,
     CLK_BITS, FTL(1),
+  };
 
+  uint8_t commands2[] = {
     // Send the data word.
     MPSSE_DO_WRITE | MPSSE_LSB, FTL(4), FTH(4),
     (data >>  0) & 0xFF,
@@ -301,12 +333,26 @@ Error SWDInterface::write(int addr, bool debug_port, uint32_t data) {
   };
 
   uint8_t response[1];
-  Check(mpsse_transaction(_ftdi, commands, sizeof(commands),
-                                 response, sizeof(response),
-                                 1000));
+  uint8_t ack;
+  for (int retry = 0; retry < 100; ++retry) {
+    Check(mpsse_transaction(_ftdi, commands1, sizeof(commands1),
+                                   response, sizeof(response),
+                                   1000));
   
-  uint8_t ack = response[0] >> 5;
+    ack = response[0] >> 5;
+    if (ack != 0x2) break;
+    debug(3, "Got response %u for SWD write (%X, %d, %08X), retrying...",
+        ack, addr, debug_port, data);
+    usleep(10000);
+  }
+
   CheckEQ(ack, 0x1);  // Require OK response.
+
+  Check(mpsse_transaction(_ftdi, commands2, sizeof(commands2),
+                                 response, 0,
+                                 1000));
+
+  debug(3, "SWD write (%X, %d, %08X) complete.", addr, debug_port, data);
 
   return success;
 }
