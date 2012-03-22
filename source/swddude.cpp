@@ -51,209 +51,20 @@ namespace CommandLine
 {
     static Scalar<int>          debug ("debug",  true,  0,
 				       "What level of debug logging to use.");
-    static Scalar<String> file("file", false, "", "Binary program to load");
+
+    static Scalar<String> flash("flash", true, "", "Binary program to load");
 
     static Scalar<bool> fix_lpc_checksum("fix_lpc_checksum", true, false,
         "When true, the loader will write the LPC-style checksum.");
 
     static Argument     *arguments[] = {
       &debug,
-      &file,
+      &flash,
       &fix_lpc_checksum,
       null };
 }
 /******************************************************************************/
-Error read_cpuid(AccessPort &ap, uint32_t *cpuid) {
-  Check(ap.write(0x04, 0xE000ED00));  // CPUID register on ARMv6M
-  return ap.read_blocking(0x0C, cpuid, 100);
-}
-/******************************************************************************/
-Error crawl_unknown_peripheral(AccessPort &ap, uint32_t regfile);
-/******************************************************************************/
-Error crawl_rom_table(AccessPort &ap, uint32_t base_addr,
-                                      uint32_t regfile,
-                                      uint32_t size) {
-  debug(1, "Found ROM Table.");
-
-  CheckEQ(size, 4096);
-
-  uint32_t memtype;
-  Check(ap.write(0x04, regfile + 0xFCC));  // MEMTYPE address into TAR.
-  Check(ap.read_blocking(0x0C, &memtype, 100));
-
-  if (memtype & 1) {
-    debug(1, "ROM Table is on a common bus with system memory.");
-  } else {
-    debug(1, "ROM Table is on a dedicated bus.");
-  }
-
-  vector<uint32_t> next_layer;
-
-  Check(ap.write(0x04, base_addr));
-  for (uint32_t i = 0; i < (0xF00 / 4); ++i) {
-    uint32_t entry;
-    Check(ap.read_blocking(0x0C, &entry, 100));
-
-    if ((entry & (1 << 1)) == 0) {
-      // 8-bit entry; construct it from the three consecutive words.
-      entry <<= 24;
-      for (int i = 0; i < 3; ++i) {
-        uint32_t part;
-        Check(ap.read_blocking(0x0C, &part, 100));
-        entry = (entry >> 8) | (part << 24);
-      }
-    }
-
-    if (entry == 0) {
-      // End of ROM table!
-      break;
-    }
-
-    if ((entry & (1 << 0)) == 0) {
-      // Entry not present; skip it.
-      debug(1, "[%d]: not present", i);
-      continue;
-    }
-
-    int32_t offset = entry & ~0xFFF;
-    uint32_t sub_regfile = base_addr + offset;
-    next_layer.push_back(sub_regfile);
-    debug(1, "[%d]: base + %08X = %08X", i, offset, sub_regfile);
-  }
-
-  for (vector<uint32_t>::iterator it = next_layer.begin();
-       it != next_layer.end();
-       ++it) {
-    crawl_unknown_peripheral(ap, *it);
-  }
-
-  return success;
-}
-/******************************************************************************/
-Error crawl_armv6m_dwt(AccessPort &ap, uint32_t base_addr, 
-                                       uint32_t regfile,
-                                       uint32_t size) {
-  debug(1, "Found ARMv6M DWT");
-  return success;
-}
-/******************************************************************************/
-Error crawl_armv6m_bpu(AccessPort &ap, uint32_t base_addr, 
-                                       uint32_t regfile,
-                                       uint32_t size) {
-  debug(1, "Found ARMv6M BPU");
-  return success;
-}
-/******************************************************************************/
-Error crawl_armv6m_scs(AccessPort &ap, uint32_t base_addr, 
-                                       uint32_t regfile,
-                                       uint32_t size) {
-  debug(1, "Requesting halt...");
-  ap.write(0x04, 0xE000EDF0);
-  ap.write(0x0C, (0xA05F << 16)
-               | (1 << 1)  // Request a halt
-               | (1 << 0)  // Enable debugging
-               );
-  
-  for (int i = 0; i < 10; ++i) {
-    ap.write(0x04, 0xE000EDF0);
-    uint32_t dhcsr;
-    ap.read_blocking(0x0C, &dhcsr, 100);
-    if (dhcsr & (1 << 17)) {
-      debug(1, "Halted!");
-      break;
-    } else {
-      debug(1, "Waiting for halt...");
-      usleep(1000000);
-    }
-  }
-
-  return success;
-}
-/******************************************************************************/
-Error crawl_unknown_peripheral(AccessPort &ap, uint32_t regfile) {
-  debug(1, "--- Peripheral at %08X in AP %02X", regfile, ap.index());
-
-  // Load Component ID registers!
-  uint32_t component_id[4];
-  Check(ap.write(0x04, regfile + 0xFF0));  // First address into TAR
-  Check(ap.read_blocking(0x0C, &component_id[0], 100));
-  Check(ap.read_blocking(0x0C, &component_id[1], 100));
-  Check(ap.read_blocking(0x0C, &component_id[2], 100));
-  Check(ap.read_blocking(0x0C, &component_id[3], 100));
-
-  for (int i = 0; i < 4; ++i) {
-    debug(1, "Component ID %d = %08X", i, component_id[i]);
-  }
-
-  // ADIv5 places certain constraints on component IDs.  Sanity check them.
-  CheckEQ(component_id[0], 0x0D);
-  CheckEQ(component_id[2], 0x05);
-  CheckEQ(component_id[3], 0xB1);
-
-  // Load Peripheral ID4, which tells us how large this component truly is.
-  Check(ap.write(0x04, regfile + 0xFD0));
-  uint32_t peripheral_id4;
-  Check(ap.read_blocking(0x0C, &peripheral_id4, 100));
-
-  uint32_t log2_size_in_blocks = (peripheral_id4 >> 4) & 0xF;
-  uint32_t size = (1 << log2_size_in_blocks) * 4 * 1024;
-  debug(1, " Size = 2^%u blocks = %u bytes", log2_size_in_blocks, size);
-
-  // regfile is the address of the *last* block -- compute the *first* block.
-  uint32_t base_addr = (regfile + 4 * 1024) - size;
-
-  // Now, dispatch on the type of this component.
-  uint8_t component_class = (component_id[1] >> 4) & 0xF;
-  switch (component_class) {
-    case 1:
-      return crawl_rom_table(ap, base_addr, regfile, size);
-  }
-
-  // Hm, Cortex-M0 seems to return bogus component classes.
-  // Attempt to recognize processor heuristically.
-  uint32_t cpuid;
-  Check(read_cpuid(ap, &cpuid));
-  debug(1, "CPUID = %08X", cpuid);
-  if (((cpuid >> 16) & 0xF) == 0xC) {  // ARMv6M
-    switch (regfile) {
-      case 0xE000E000:
-        return crawl_armv6m_scs(ap, base_addr, regfile, size);
-
-      case 0xE0001000:
-        return crawl_armv6m_dwt(ap, base_addr, regfile, size);
-
-      case 0xE0002000:
-        return crawl_armv6m_bpu(ap, base_addr, regfile, size);
-    }
-  }
-
-  debug(1, "Unknown component class %X.", component_class);
-  return success;
-}
-/******************************************************************************/
-Error crawl_memory_ap(AccessPort &ap) {
-  uint32_t base;
-  Check(ap.read_blocking(0xF8, &base, 10));
-
-  if ((base & 3) != 3) {
-    // This is a "legacy" device not compliant with ARM ADIv5.
-    debug(1, "Encountered non-ADIv5 legacy device");
-    return success;
-  }
-
-  // The MEM-AP may be in an arbitrary state.  Fix that.
-  Check(ap.write(0x00, (1 << 4)     // Auto increment.
-                     | (2 << 0)));  // Transfer size 2^2 = 4 bytes.
-
-  // Extract the Debug Register File address from the BASE register.
-  // This points to the last 4KiB block of this debug device.
-  uint32_t regfile = base & ~0xFFF;
-  debug(1, "register file at %08X", regfile);
-
-  return crawl_unknown_peripheral(ap, regfile);
-}
-/******************************************************************************/
-Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_table) {
+static Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_table) {
   Check(target.write_register(Target::kR0, param_table));
   Check(target.write_register(Target::kR1, result_table));
   Check(target.write_register(Target::kRDebugReturn, 0x1FFF1FF0));
@@ -297,11 +108,11 @@ Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_table) {
   return success;
 }
 /******************************************************************************/
-Error unmap_boot_sector(Target &target) {
+static Error unmap_boot_sector(Target &target) {
   return target.write_word(0x40048000, 2);
 }
 /******************************************************************************/
-Error program_flash(Target &target, void const *program, size_t word_count) {
+static Error program_flash(Target &target, void const *program, size_t word_count) {
   // Only support single-sector writes for now.
   uint32_t iap_table = 0x10000000;
   uint32_t ram_buffer = 0x10000100;
@@ -365,7 +176,7 @@ Error program_flash(Target &target, void const *program, size_t word_count) {
   return success;
 }
 /******************************************************************************/
-Error dump_flash(Target &target) {
+static Error dump_flash(Target &target) {
   uint32_t buffer[256 / sizeof(uint32_t)];
   Check(target.read_words(0, buffer, sizeof(buffer) / sizeof(buffer[0])));
 
@@ -377,7 +188,7 @@ Error dump_flash(Target &target) {
   return success;
 }
 /******************************************************************************/
-Error run_experiment(ftdi_context &ftdi) {
+static Error run_experiment(ftdi_context &ftdi) {
   SWDInterface swd(&ftdi);
   Check(swd.initialize());
   Check(swd.reset_target());
@@ -403,49 +214,51 @@ Error run_experiment(ftdi_context &ftdi) {
     return success;
   }
 
-  ifstream input;
-  input.open(CommandLine::file.get());
+  if (CommandLine::flash.set()) {
+    ifstream input;
+    input.open(CommandLine::flash.get());
 
-  input.seekg(0, ios::end);
-  size_t input_length = input.tellg();
-  input.seekg(0, ios::beg);
+    input.seekg(0, ios::end);
+    size_t input_length = input.tellg();
+    input.seekg(0, ios::beg);
 
-  uint8_t *program;
-  Error check_error = success;
-  CheckCleanupEQ(input_length, (input_length / 4) * 4, wrong_size);
+    uint8_t *program = 0;
+    Error check_error = success;
+    CheckCleanupEQ(input_length, (input_length / 4) * 4, wrong_size);
 
-  program = new uint8_t[input_length];
+    program = new uint8_t[input_length];
 
-  input.read((char *) program, input_length);
+    input.read((char *) program, input_length);
 
-  debug(1, "Read program of %u bytes", (unsigned int) input_length);
+    debug(1, "Read program of %u bytes", (unsigned int) input_length);
 
-  if (CommandLine::fix_lpc_checksum.get()) {
+    if (CommandLine::fix_lpc_checksum.get()) {
 
-    const size_t kCheckedVectors = 7;
-    uint32_t sum = 0;
-    uint32_t *program_words = (uint32_t *) program;
-    for (size_t i = 0; i < kCheckedVectors; ++i) {
-      sum += program_words[i];
+      const size_t kCheckedVectors = 7;
+      uint32_t sum = 0;
+      uint32_t *program_words = (uint32_t *) program;
+      for (size_t i = 0; i < kCheckedVectors; ++i) {
+        sum += program_words[i];
+      }
+      sum = 0 - sum;
+      debug(1, "Repairing LPC checksum: %08X", sum);
+      program_words[kCheckedVectors] = sum;
     }
-    sum = 0 - sum;
-    debug(1, "Repairing LPC checksum: %08X", sum);
-    program_words[kCheckedVectors] = sum;
-  }
 
-  Check(program_flash(target, program, input_length / sizeof(uint32_t)));
-  Check(dump_flash(target));
+    Check(program_flash(target, program, input_length / sizeof(uint32_t)));
+    Check(dump_flash(target));
 
-  Check(swd.reset_target());
+    Check(swd.reset_target());
 
 wrong_size:
-  input.close();
-  delete[] program;
+    input.close();
+    if (program) delete[] program;
+  }
 
   return success;
 }
 /******************************************************************************/
-Error error_main(int argc, char const ** argv)
+static Error error_main(int argc, char const ** argv)
 {
     Error		check_error = success;
     ftdi_context	ftdi;
