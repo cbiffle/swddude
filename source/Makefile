@@ -27,7 +27,7 @@
 #
 
 depth			:= ..
-products		:= swddude
+products		:= swddude swdprobe
 
 swddude[type]		:= program
 swddude[cpp_files]	:= swddude.cpp swd_interface.cpp target.cpp
@@ -36,5 +36,13 @@ swddude[libs]		+= log:log
 swddude[libs]		+= files:files
 swddude[libs]		+= command_line:command_line
 swddude[libs]		+= system/ftdi:ftdi
+
+swdprobe[type]		:= program
+swdprobe[cpp_files]	:= swdprobe.cpp swd_interface.cpp target.cpp
+swdprobe[libs]		:= error:error
+swdprobe[libs]		+= log:log
+swdprobe[libs]		+= files:files
+swdprobe[libs]		+= command_line:command_line
+swdprobe[libs]		+= system/ftdi:ftdi
 
 include $(depth)/build/Makefile.rules

@@ -204,11 +204,12 @@ Error SWDInterface::reset_target() {
   CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
           sizeof(commands));
 
-  usleep(20000);
+  usleep(100000);
 
   commands[1] = kStateIdle;
   CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
           sizeof(commands));
+  usleep(100000);
 
   return success;
 }
@@ -451,4 +452,8 @@ Error AccessPort::read_blocking(uint8_t address, uint32_t *data,
 Error AccessPort::write(uint8_t address, uint32_t data) {
   Check(_dap.select_ap_bank(_ap, address >> 4));
   return _dap.write_ap_in_bank((address & 0xF) >> 2, data);
+}
+
+DebugAccessPort &AccessPort::dap() {
+  return _dap;
 }

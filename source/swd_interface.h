@@ -156,6 +156,7 @@ public:
   AccessPort(DebugAccessPort *, uint8_t);
 
   uint8_t index() const;
+  DebugAccessPort &dap();
 
   Err::Error post_read(uint8_t addr);
   Err::Error read_pipelined(uint8_t addr, uint32_t *lastData);
