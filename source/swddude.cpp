@@ -346,60 +346,64 @@ wrong_size:
 /*******************************************************************************
  * Entry point (sort of -- see main below)
  */
-static Error error_main(int argc, char const ** argv)
-{
-    Error		check_error = success;
-    ftdi_context	ftdi;
-    uint		chipid;
 
-    CheckCleanupP(ftdi_init(&ftdi), init_failed);
+static uint16_t kFt232hVid = 0x0403;
+static uint16_t kFt232hPid = 0x6014;
 
-    CheckCleanupStringP(ftdi_usb_open(&ftdi, 0x0403, 0x6014), open_failed,
-			"Unable to open FTDI device: %s",
-			ftdi_get_error_string(&ftdi));
+static Error error_main(int argc, char const *argv[]) {
+  Error check_error = success;
 
-    CheckCleanupP(ftdi_usb_reset(&ftdi), reset_failed);
-    CheckCleanupP(ftdi_set_interface(&ftdi, INTERFACE_A), interface_failed);
-    CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
+  ftdi_context ftdi;
+  CheckCleanupP(ftdi_init(&ftdi), init_failed);
 
-    debug(1, "FTDI chipid: %X", chipid);
+  CheckCleanupStringP(ftdi_usb_open(&ftdi, kFt232hVid, kFt232hPid),
+                      open_failed,
+                      "Unable to open FTDI device: %s",
+                      ftdi_get_error_string(&ftdi));
 
-    CheckCleanup(run_experiment(ftdi), experiment_failed);
+  CheckCleanupP(ftdi_usb_reset(&ftdi), reset_failed);
+  CheckCleanupP(ftdi_set_interface(&ftdi, INTERFACE_A), interface_failed);
 
-  experiment_failed:
-    CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
+  unsigned chipid;
+  CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
 
-  read_failed:
-  interface_failed:
-  reset_failed:
-    CheckStringP(ftdi_usb_close(&ftdi),
-		 "Unable to close FTDI device: %s",
-		 ftdi_get_error_string(&ftdi));
+  debug(3, "FTDI chipid: %X", chipid);
 
-  open_failed:
-    ftdi_deinit(&ftdi);
+  CheckCleanup(run_experiment(ftdi), experiment_failed);
 
-  init_failed:
-    return check_error;
+experiment_failed:
+  CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
+
+read_failed:
+interface_failed:
+reset_failed:
+  CheckStringP(ftdi_usb_close(&ftdi),
+               "Unable to close FTDI device: %s",
+               ftdi_get_error_string(&ftdi));
+
+open_failed:
+  ftdi_deinit(&ftdi);
+
+init_failed:
+  return check_error;
 }
 
 
 /*******************************************************************************
  * System entry point.
  */
-int main(int argc, char const ** argv)
-{
-    Error	check_error = success;
+int main(int argc, char const *argv[]) {
+  Error check_error = success;
 
-    CheckCleanup(CommandLine::parse(argc, argv, CommandLine::arguments),
-                 failure);
+  CheckCleanup(CommandLine::parse(argc, argv, CommandLine::arguments),
+               failure);
 
-    log().set_level(CommandLine::debug.get());
+  log().set_level(CommandLine::debug.get());
 
-    CheckCleanup(error_main(argc, argv), failure);
-    return 0;
+  CheckCleanup(error_main(argc, argv), failure);
+  return 0;
 
-  failure:
-    error_stack_print();
-    return 1;
+failure:
+  error_stack_print();
+  return 1;
 }
