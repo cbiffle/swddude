@@ -261,10 +261,9 @@ static Error dump_flash(Target &target) {
  * swddude main implementation
  */
 
-static Error run_experiment(ftdi_context &ftdi) {
+static Error run_experiment(SWDDriver &swd) {
   Error check_error = success;
 
-  MPSSESWDDriver swd(&ftdi);
   Check(swd.initialize());
   Check(swd.reset_target(100000));
 
@@ -371,7 +370,10 @@ static Error error_main(int argc, char const *argv[]) {
 
   debug(3, "FTDI chipid: %X", chipid);
 
-  CheckCleanup(run_experiment(ftdi), experiment_failed);
+  {
+    MPSSESWDDriver swd(&ftdi);
+    CheckCleanup(run_experiment(swd), experiment_failed);
+  }
 
 experiment_failed:
   CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
