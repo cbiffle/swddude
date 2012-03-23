@@ -230,18 +230,6 @@ static Error program_flash(Target &target, void const *program,
 }
 
 /*
- * Enables ARMv7-M faults, so that missteps don't become Hard Fault.  This
- * is tolerated by the ARMv6-M Cortex-M0, but technically illegal.
- */
-static Error enable_faults(Target &target) {
-  Check(target.write_word(0xE000ED24, (1 << 18)  // Usage fault
-                                    | (1 << 17)  // Bus fault
-                                    | (1 << 16)  // Mem Manage fault
-                                    ));
-  return success;
-}
-
-/*
  * Dumps the first 256 bytes of the target's flash to the console.
  */
 static Error dump_flash(Target &target) {
@@ -261,25 +249,63 @@ static Error dump_flash(Target &target) {
  * swddude main implementation
  */
 
+static Error flash_from_file(Target &target, char const *path) {
+  Error check_error = success;
+  uint8_t *program = 0;
+  ifstream input;
+
+  input.open(path);
+
+  // Do the "get length of file" dance.
+  input.seekg(0, ios::end);
+  size_t input_length = input.tellg();
+  input.seekg(0, ios::beg);
+
+  CheckCleanupEQ(input_length, (input_length / 4) * 4, wrong_size);
+
+  program = new uint8_t[input_length];
+
+  input.read((char *) program, input_length);
+
+  debug(1, "Read program of %zu bytes", input_length);
+
+  if (CommandLine::fix_lpc_checksum.get()) {
+    const size_t kCheckedVectors = 7;
+    uint32_t sum = 0;
+    uint32_t *program_words = (uint32_t *) program;
+    for (size_t i = 0; i < kCheckedVectors; ++i) {
+      sum += program_words[i];
+    }
+    sum = 0 - sum;
+    debug(1, "Repairing LPC checksum: %08X", sum);
+    program_words[kCheckedVectors] = sum;
+  }
+
+  CheckCleanup(program_flash(target, program, input_length / sizeof(uint32_t)),
+               comms_failure);
+  CheckCleanup(dump_flash(target), comms_failure);
+
+comms_failure:
+wrong_size:
+  input.close();
+  if (program) delete[] program;
+  return check_error;
+}
+
 static Error run_experiment(SWDDriver &swd) {
   Error check_error = success;
 
+  DebugAccessPort dap(swd);
+  Target target(swd, dap, 0);
+
+  // Initialize bus, reset/halt target, and load state.
   Check(swd.initialize());
   Check(swd.reset_target(100000));
-
-  DebugAccessPort dap(swd);
   Check(dap.reset_state());
-
-  Target target(swd, dap, 0);
   Check(target.initialize());
   Check(target.halt());
 
-  Check(enable_faults(target));
-
-  uint32_t pc;
-  Check(target.read_register(Target::kR15, &pc));
-  debug(1, "Interrupted target at PC = %08X", pc);
-
+  // Scope out the breakpoint unit.
   Check(target.enable_breakpoints());
   size_t breakpoint_count;
   Check(target.get_breakpoint_count(&breakpoint_count));
@@ -290,55 +316,14 @@ static Error run_experiment(SWDDriver &swd) {
     return success;
   }
 
+  // Flash if requested.
   if (CommandLine::flash.set()) {
-    ifstream input;
-    input.open(CommandLine::flash.get());
-
-    input.seekg(0, ios::end);
-    size_t input_length = input.tellg();
-    input.seekg(0, ios::beg);
-
-    uint8_t *program = 0;
-    CheckCleanupEQ(input_length, (input_length / 4) * 4, wrong_size);
-
-    program = new uint8_t[input_length];
-
-    input.read((char *) program, input_length);
-
-    debug(1, "Read program of %u bytes", (unsigned int) input_length);
-
-    if (CommandLine::fix_lpc_checksum.get()) {
-
-      const size_t kCheckedVectors = 7;
-      uint32_t sum = 0;
-      uint32_t *program_words = (uint32_t *) program;
-      for (size_t i = 0; i < kCheckedVectors; ++i) {
-        sum += program_words[i];
-      }
-      sum = 0 - sum;
-      debug(1, "Repairing LPC checksum: %08X", sum);
-      program_words[kCheckedVectors] = sum;
-    }
-
-    CheckCleanup(program_flash(target, program,
-                               input_length / sizeof(uint32_t)),
+    CheckCleanup(flash_from_file(target, CommandLine::flash.get()),
                  comms_failure);
-    CheckCleanup(dump_flash(target),
-                 comms_failure);
+  }
 
 comms_failure:
-    if (check_error != success) {
-      uint32_t ctrlstat;
-      Check(dap.read_ctrlstat_wcr(&ctrlstat));
-      notice("Final CTRL/STAT = %08X", ctrlstat);
-    }
-
-    Check(swd.reset_target(100000));
-
-wrong_size:
-    input.close();
-    if (program) delete[] program;
-  }
+  Check(swd.reset_target(100000));
 
   return check_error;
 }
