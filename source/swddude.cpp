@@ -323,14 +323,16 @@ static Error run_experiment(ftdi_context &ftdi) {
 
     CheckCleanup(program_flash(target, program,
                                input_length / sizeof(uint32_t)),
-                 report_failure_reason);
+                 comms_failure);
     CheckCleanup(dump_flash(target),
-                 report_failure_reason);
+                 comms_failure);
 
-report_failure_reason:
-    uint32_t ctrlstat;
-    Check(dap.read_ctrlstat_wcr(&ctrlstat));
-    notice("Final CTRL/STAT = %08X", ctrlstat);
+comms_failure:
+    if (check_error != success) {
+      uint32_t ctrlstat;
+      Check(dap.read_ctrlstat_wcr(&ctrlstat));
+      notice("Final CTRL/STAT = %08X", ctrlstat);
+    }
 
     Check(swd.reset_target(100000));
 
