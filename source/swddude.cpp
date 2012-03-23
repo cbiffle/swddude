@@ -49,7 +49,10 @@ using std::vector;
 using std::ifstream;
 using std::ios;
 
-/******************************************************************************/
+/*******************************************************************************
+ * Command-line definitions
+ */
+
 namespace CommandLine
 {
     static Scalar<int>          debug ("debug",  true,  0,
@@ -66,8 +69,18 @@ namespace CommandLine
       &fix_lpc_checksum,
       null };
 }
-/******************************************************************************/
-static Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_table, uint32_t stack) {
+
+
+/*******************************************************************************
+ * Flash programming implementation
+ */
+
+/*
+ * Invokes a routine within In-Application Programming ROM of an LPC part.
+ */
+static Error invoke_iap(Target &target, uint32_t param_table,
+                                        uint32_t result_table,
+                                        uint32_t stack) {
   debug(2, "invoke_iap: param_table=%08X, result_table=%08X, stack=%08X",
       param_table, result_table, stack);
 
@@ -123,12 +136,26 @@ static Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_ta
   }
   return failure;
 }
-/******************************************************************************/
+
+/*
+ * Unmaps the bootloader ROM from address 0 in an LPC part, revealing user flash
+ * sector 0 beneath.
+ *
+ * This operation is valid for at least the following micros:
+ *  - LPC111x / LPC11Cxx
+ *  - LPC13xx
+ *
+ * The current implementation won't work on the LPC17xx.
+ */
 static Error unmap_boot_sector(Target &target) {
   return target.write_word(0x40048000, 2);
 }
-/******************************************************************************/
-static Error program_flash(Target &target, void const *program, size_t word_count) {
+
+/*
+ * Rewrites the target's flash memory.
+ */
+static Error program_flash(Target &target, void const *program,
+                                           size_t word_count) {
   uint32_t iap_table = 0x10000000;  // Used for param and response: 20B
   uint32_t ram_buffer = 0x10000020;  // 256B
   uint32_t stack = 0x10000220;
@@ -201,7 +228,11 @@ static Error program_flash(Target &target, void const *program, size_t word_coun
 
   return success;
 }
-/******************************************************************************/
+
+/*
+ * Enables ARMv7-M faults, so that missteps don't become Hard Fault.  This
+ * is tolerated by the ARMv6-M Cortex-M0, but technically illegal.
+ */
 static Error enable_faults(Target &target) {
   Check(target.write_word(0xE000ED24, (1 << 18)  // Usage fault
                                     | (1 << 17)  // Bus fault
@@ -209,7 +240,10 @@ static Error enable_faults(Target &target) {
                                     ));
   return success;
 }
-/******************************************************************************/
+
+/*
+ * Dumps the first 256 bytes of the target's flash to the console.
+ */
 static Error dump_flash(Target &target) {
   uint32_t buffer[256 / sizeof(uint32_t)];
   Check(target.read_words(0, buffer, sizeof(buffer) / sizeof(buffer[0])));
@@ -221,7 +255,12 @@ static Error dump_flash(Target &target) {
 
   return success;
 }
-/******************************************************************************/
+
+
+/*******************************************************************************
+ * swddude main implementation
+ */
+
 static Error run_experiment(ftdi_context &ftdi) {
   Error check_error = success;
 
@@ -302,7 +341,11 @@ wrong_size:
 
   return check_error;
 }
-/******************************************************************************/
+
+
+/*******************************************************************************
+ * Entry point (sort of -- see main below)
+ */
 static Error error_main(int argc, char const ** argv)
 {
     Error		check_error = success;
@@ -339,7 +382,11 @@ static Error error_main(int argc, char const ** argv)
   init_failed:
     return check_error;
 }
-/******************************************************************************/
+
+
+/*******************************************************************************
+ * System entry point.
+ */
 int main(int argc, char const ** argv)
 {
     Error	check_error = success;
@@ -356,4 +403,3 @@ int main(int argc, char const ** argv)
     error_stack_print();
     return 1;
 }
-/******************************************************************************/
