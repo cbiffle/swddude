@@ -96,15 +96,15 @@ bool swd_parity(uint32_t data) {
   return t & 1;
 }
 
-Error setup_buffers(ftdi_context &ftdi) {
-  CheckP(ftdi_usb_purge_buffers(&ftdi));
+Error setup_buffers(ftdi_context *ftdi) {
+  CheckP(ftdi_usb_purge_buffers(ftdi));
 
-  CheckP(ftdi_read_data_set_chunksize(&ftdi, 65536));
-  CheckP(ftdi_write_data_set_chunksize(&ftdi, 65536));
+  CheckP(ftdi_read_data_set_chunksize(ftdi, 65536));
+  CheckP(ftdi_write_data_set_chunksize(ftdi, 65536));
 
   uint32_t read, write;
-  CheckP(ftdi_read_data_get_chunksize(&ftdi, &read));
-  CheckP(ftdi_write_data_get_chunksize(&ftdi, &write));
+  CheckP(ftdi_read_data_get_chunksize(ftdi, &read));
+  CheckP(ftdi_write_data_get_chunksize(ftdi, &write));
 
   debug(4, "Chunksize (r/w): %u/%u", read, write);
 
@@ -134,13 +134,13 @@ Error mpsse_transaction(ftdi_context *ftdi,
   return Err::timeout;
 }
 
-Error mpsse_synchronize(ftdi_context &ftdi) {
+Error mpsse_synchronize(ftdi_context *ftdi) {
   uint8_t commands[] = { 0xAA };
   uint8_t response[2];
 
-  Check(mpsse_transaction(&ftdi, commands, sizeof(commands),
-                                 response, sizeof(response),
-                                 1000));
+  Check(mpsse_transaction(ftdi, commands, sizeof(commands),
+                                response, sizeof(response),
+                                1000));
 
   CheckEQ(response[0], 0xFA);
   CheckEQ(response[1], 0xAA);
@@ -148,13 +148,13 @@ Error mpsse_synchronize(ftdi_context &ftdi) {
   return success;
 }
 
-Error mpsse_setup(ftdi_context &ftdi) {
+Error mpsse_setup(ftdi_context *ftdi) {
   Check(setup_buffers(ftdi));
-  CheckP(ftdi_set_latency_timer(&ftdi, 1));
+  CheckP(ftdi_set_latency_timer(ftdi, 1));
 
   // Switch into MPSSE mode!
-  CheckP(ftdi_set_bitmode(&ftdi, 0x00, BITMODE_RESET));
-  CheckP(ftdi_set_bitmode(&ftdi, 0x00, BITMODE_MPSSE));
+  CheckP(ftdi_set_bitmode(ftdi, 0x00, BITMODE_RESET));
+  CheckP(ftdi_set_bitmode(ftdi, 0x00, BITMODE_MPSSE));
 
   Check(mpsse_synchronize(ftdi));
 
@@ -170,7 +170,7 @@ Error mpsse_setup(ftdi_context &ftdi) {
     SET_BITS_HIGH, 0, 0,
   };
 
-  CheckEQ(ftdi_write_data(&ftdi, commands, sizeof(commands)),
+  CheckEQ(ftdi_write_data(ftdi, commands, sizeof(commands)),
           sizeof(commands));
 
   return success;
@@ -187,7 +187,7 @@ MPSSESWDDriver::MPSSESWDDriver(ftdi_context *ftdi) : _ftdi(ftdi) {}
 
 
 Error MPSSESWDDriver::initialize(uint32_t *idcode_out) {
-  Check(mpsse_setup(*_ftdi));
+  Check(mpsse_setup(_ftdi));
 
   // SWD line reset sequence: 50 bits with SWDIO held high.
   uint8_t commands[] = {
