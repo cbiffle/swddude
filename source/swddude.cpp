@@ -284,7 +284,7 @@ static Error run_experiment(ftdi_context &ftdi) {
   Check(target.enable_breakpoints());
   size_t breakpoint_count;
   Check(target.get_breakpoint_count(&breakpoint_count));
-  notice("Target supports %u hardware breakpoints.", (uint32_t) breakpoint_count);
+  notice("Target supports %zu hardware breakpoints.", breakpoint_count);
 
   if (breakpoint_count == 0) {
     warning("Can't continue!");
