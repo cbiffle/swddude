@@ -270,7 +270,7 @@ static Error run_experiment(SWDDriver &swd) {
   DebugAccessPort dap(swd);
   Check(dap.reset_state());
 
-  Target target(&swd, &dap, 0);
+  Target target(swd, dap, 0);
   Check(target.initialize());
   Check(target.halt());
 

@@ -28,7 +28,7 @@ class Target {
   Err::Error poke32(uint32_t address, uint32_t data);
 
 public:
-  Target(SWDDriver *, DebugAccessPort *, uint8_t mem_ap_index);
+  Target(SWDDriver &, DebugAccessPort &, uint8_t mem_ap_index);
 
   /*
    * Initializes this object and the debug unit of the remote system.

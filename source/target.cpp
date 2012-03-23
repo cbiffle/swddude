@@ -28,8 +28,8 @@ enum BPURegister {
   kBPU_COMP_base = 0xE0002008,
 };
 
-Target::Target(SWDDriver *swd, DebugAccessPort *dap, uint8_t mem_ap_index)
-    : _swd(*swd), _dap(*dap),
+Target::Target(SWDDriver &swd, DebugAccessPort &dap, uint8_t mem_ap_index)
+    : _swd(swd), _dap(dap),
       _mem_ap_index(mem_ap_index),
       _current_ap_bank(-1) {}
 
