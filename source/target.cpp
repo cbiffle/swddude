@@ -90,7 +90,11 @@ Error Target::poke32(uint32_t address, uint32_t data) {
 
 Error Target::initialize() {
   // We only use one AP.  Go ahead and select it and configure CSW.
-  Check(write_ap(kMEMAP_CSW, 2));  // Configure for 4-byte transactions.
+  Check(start_read_ap(kMEMAP_CSW));  // Load previous value.
+  uint32_t csw;
+  Check(final_read_ap(&csw));
+  csw = (csw & 0xFFFFF000) | 2;  // Modify value for 4-byte transactions.
+  Check(write_ap(kMEMAP_CSW, csw));  // Write it back.
 
   // Enable debugging.
   uint32_t dhcsr;
@@ -110,8 +114,14 @@ Error Target::read_words(uint32_t target_addr,
   uint32_t *host_buffer_as_words = static_cast<uint32_t *>(host_buffer);
 
   // Configure MEM-AP for auto-incrementing 32-bit transactions.
-  Check(write_ap(kMEMAP_CSW, (1 << 4) | 2));
-  
+  Check(start_read_ap(kMEMAP_CSW));  // Load previous value.
+  uint32_t csw;
+  Check(final_read_ap(&csw));
+  csw = (csw & 0xFFFFF000)  // Reserved fields must be preserved
+      | (1 << 4)  // Auto-increment.
+      | 2;  // 4-byte transactions.
+  Check(write_ap(kMEMAP_CSW, csw));  // Write it back.
+
   // Load Transfer Address Register with first address.
   Check(write_ap(kMEMAP_TAR, target_addr));
 
@@ -130,7 +140,13 @@ Error Target::write_words(void const *host_buffer, uint32_t target_addr,
       static_cast<uint32_t const *>(host_buffer);
 
   // Configure MEM-AP for auto-incrementing 32-bit transactions.
-  Check(write_ap(kMEMAP_CSW, (1 << 4) | 2));
+  Check(start_read_ap(kMEMAP_CSW));  // Load previous value.
+  uint32_t csw;
+  Check(final_read_ap(&csw));
+  csw = (csw & 0xFFFFF000)  // Reserved fields must be preserved
+      | (1 << 4)  // Auto-increment.
+      | 2;  // 4-byte transactions.
+  Check(write_ap(kMEMAP_CSW, csw));  // Write it back.
   
   // Load Transfer Address Register with first address.
   Check(write_ap(kMEMAP_TAR, target_addr));
