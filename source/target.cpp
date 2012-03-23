@@ -60,22 +60,28 @@ Error Target::step_read_ap(uint8_t nextAddress, uint32_t *lastData) {
 }
 
 Error Target::final_read_ap(uint32_t *data) {
-  return _dap.read_rdbuff(data);
+  Check(_dap.read_rdbuff(data));
+  return success;
 }
 
 Error Target::peek32(uint32_t address, uint32_t *data) {
   Check(write_ap(kMEMAP_TAR, address));
-  Check(start_read_ap(kMEMAP_DRW));
-  return final_read_ap(data);
+  CheckRetry(start_read_ap(kMEMAP_DRW), 100);
+  CheckRetry(final_read_ap(data), 100);
+
+  debug(3, "peek32(%08X) = %08X", address, *data);
+  return success;
 }
 
 Error Target::poke32(uint32_t address, uint32_t data) {
+  debug(3, "poke32(%08X, %08X)", address, data);
   Check(write_ap(kMEMAP_TAR, address));
-  Check(write_ap(kMEMAP_DRW, data));
+  CheckRetry(write_ap(kMEMAP_DRW, data), 100);
 
+  // Block waiting for write to complete.
   uint32_t csw;
   do {
-    Check(start_read_ap(kMEMAP_CSW));
+    CheckRetry(start_read_ap(kMEMAP_CSW), 100);
     Check(final_read_ap(&csw));
   } while (csw & (1 << 7));
 
@@ -110,9 +116,9 @@ Error Target::read_words(uint32_t target_addr,
   Check(write_ap(kMEMAP_TAR, target_addr));
 
   // Transfer using pipelined reads.
-  Check(start_read_ap(kMEMAP_DRW));
+  CheckRetry(start_read_ap(kMEMAP_DRW), 100);
   for (size_t i = 0; i < count; ++i) {
-    Check(step_read_ap(kMEMAP_DRW, &host_buffer_as_words[i]));
+    CheckRetry(step_read_ap(kMEMAP_DRW, &host_buffer_as_words[i]), 100);
   }
 
   return success;
