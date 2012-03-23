@@ -1,6 +1,7 @@
 #include "target.h"
 
-#include "swd_interface.h"
+#include "swd_dp.h"
+#include "swd.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
@@ -27,17 +28,13 @@ enum BPURegister {
   kBPU_COMP_base = 0xE0002008,
 };
 
-static uint8_t reg_in_bank(uint8_t address) {
-  return (address & 0xF) >> 2;
-}
-
-Target::Target(SWDInterface *swd, DebugAccessPort *dap, uint8_t mem_ap_index)
+Target::Target(SWDDriver *swd, DebugAccessPort *dap, uint8_t mem_ap_index)
     : _swd(*swd), _dap(*dap),
       _mem_ap_index(mem_ap_index),
       _current_ap_bank(-1) {}
 
 Error Target::select_bank_for_address(uint8_t address) {
-  uint8_t bank = address >> 4;
+  uint8_t bank = address & 0xF0;
   if (_current_ap_bank != bank) {
     Check(_dap.select_ap_bank(_mem_ap_index, bank));
     _current_ap_bank = bank;
@@ -48,18 +45,18 @@ Error Target::select_bank_for_address(uint8_t address) {
 Error Target::write_ap(uint8_t address, uint32_t data) {
   Check(select_bank_for_address(address));
 
-  return _dap.write_ap_in_bank(reg_in_bank(address), data);
+  return _dap.write_ap_in_bank(address, data);
 }
 
-Error Target::post_read_ap(uint8_t address) {
+Error Target::start_read_ap(uint8_t address) {
   Check(select_bank_for_address(address));
 
-  return _dap.post_read_ap_in_bank(reg_in_bank(address));
+  return _dap.start_read_ap_in_bank(address);
 }
 
-Error Target::read_ap_pipelined(uint8_t nextAddress, uint32_t *lastData) {
+Error Target::step_read_ap(uint8_t nextAddress, uint32_t *lastData) {
   Check(select_bank_for_address(nextAddress));
-  return _dap.read_ap_in_bank_pipelined(reg_in_bank(nextAddress), lastData);
+  return _dap.step_read_ap_in_bank(nextAddress, lastData);
 }
 
 Error Target::final_read_ap(uint32_t *data) {
@@ -68,7 +65,7 @@ Error Target::final_read_ap(uint32_t *data) {
 
 Error Target::peek32(uint32_t address, uint32_t *data) {
   Check(write_ap(kMEMAP_TAR, address));
-  Check(post_read_ap(kMEMAP_DRW));
+  Check(start_read_ap(kMEMAP_DRW));
   return final_read_ap(data);
 }
 
@@ -78,7 +75,7 @@ Error Target::poke32(uint32_t address, uint32_t data) {
 
   uint32_t csw;
   do {
-    Check(post_read_ap(kMEMAP_CSW));
+    Check(start_read_ap(kMEMAP_CSW));
     Check(final_read_ap(&csw));
   } while (csw & (1 << 7));
 
@@ -113,9 +110,9 @@ Error Target::read_words(uint32_t target_addr,
   Check(write_ap(kMEMAP_TAR, target_addr));
 
   // Transfer using pipelined reads.
-  Check(post_read_ap(kMEMAP_DRW));
+  Check(start_read_ap(kMEMAP_DRW));
   for (size_t i = 0; i < count; ++i) {
-    Check(read_ap_pipelined(kMEMAP_DRW, &host_buffer_as_words[i]));
+    Check(step_read_ap(kMEMAP_DRW, &host_buffer_as_words[i]));
   }
 
   return success;

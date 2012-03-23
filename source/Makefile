@@ -30,7 +30,7 @@ depth			:= ..
 products		:= swddude swdprobe
 
 swddude[type]		:= program
-swddude[cpp_files]	:= swddude.cpp swd_interface.cpp target.cpp
+swddude[cpp_files]	:= swd_dp.cpp swd_mpsse.cpp target.cpp swddude.cpp
 swddude[libs]		:= error:error
 swddude[libs]		+= log:log
 swddude[libs]		+= files:files
@@ -38,7 +38,7 @@ swddude[libs]		+= command_line:command_line
 swddude[libs]		+= system/ftdi:ftdi
 
 swdprobe[type]		:= program
-swdprobe[cpp_files]	:= swdprobe.cpp swd_interface.cpp target.cpp
+swdprobe[cpp_files]	:= swd_dp.cpp swd_mpsse.cpp target.cpp swdprobe.cpp
 swdprobe[libs]		:= error:error
 swdprobe[libs]		+= log:log
 swdprobe[libs]		+= files:files

@@ -7,10 +7,10 @@
 #include <stddef.h>
 
 class DebugAccessPort;
-class SWDInterface;
+class SWDDriver;
 
 class Target {
-  SWDInterface &_swd;
+  SWDDriver &_swd;
   DebugAccessPort &_dap;
   uint8_t _mem_ap_index;
 
@@ -20,15 +20,15 @@ class Target {
 
   Err::Error write_ap(uint8_t address, uint32_t data);
 
-  Err::Error post_read_ap(uint8_t address);
-  Err::Error read_ap_pipelined(uint8_t nextAddress, uint32_t *lastData);
+  Err::Error start_read_ap(uint8_t address);
+  Err::Error step_read_ap(uint8_t nextAddress, uint32_t *lastData);
   Err::Error final_read_ap(uint32_t *data);
 
   Err::Error peek32(uint32_t address, uint32_t *data);
   Err::Error poke32(uint32_t address, uint32_t data);
 
 public:
-  Target(SWDInterface *, DebugAccessPort *, uint8_t mem_ap_index);
+  Target(SWDDriver *, DebugAccessPort *, uint8_t mem_ap_index);
 
   /*
    * Initializes this object and the debug unit of the remote system.

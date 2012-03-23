@@ -26,7 +26,9 @@
  */
 
 #include "target.h"
-#include "swd_interface.h"
+#include "swd_dp.h"
+#include "swd_mpsse.h"
+#include "swd.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"

@@ -1,4 +1,6 @@
-#include "swd_interface.h"
+#include "swd_mpsse.h"
+
+#include "swd_dp.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
@@ -10,6 +12,10 @@
 using namespace Err;
 using namespace Log;
 
+/*******************************************************************************
+ * MPSSE implementation
+ */
+
 /*
  * Many of the MPSSE commands expect either an 8- or 16-bit count.  To get the
  * most out of those bits, it encodes a count N as N-1.  These macros produce
@@ -18,8 +24,7 @@ using namespace Log;
 #define FTH(n) ((((n) - 1) >> 8) & 0xFF)  // High 8 bits
 #define FTL(n) (((n) - 1) & 0xFF)         // Low 8 bits
 
-
-namespace {
+namespace {  // un-named namespace for implementation bits
 
 /*
  * Maps FT232H I/O pins to SWD signals and protocol states.  The mapping
@@ -53,7 +58,7 @@ uint8_t const kSWDHeaderWrite = 0 << 2;
 uint8_t const kSWDHeaderParity = 1 << 5;
 uint8_t const kSWDHeaderPark = 1 << 7;
 
-uint8_t swd_request(int address, bool debug_port, bool write) {
+uint8_t swd_request(unsigned address, bool debug_port, bool write) {
   bool parity = debug_port ^ write;
 
   uint8_t request = kSWDHeaderStart
@@ -174,15 +179,30 @@ Error mpsse_setup(ftdi_context &ftdi) {
 }  // un-named namespace for implementation factors
 
 
-SWDInterface::SWDInterface(ftdi_context *ftdi) : _ftdi(ftdi) {}
+/*******************************************************************************
+ * MPSSESWDDriver class implementation
+ */
+
+MPSSESWDDriver::MPSSESWDDriver(ftdi_context *ftdi) : _ftdi(ftdi) {}
 
 
-Error SWDInterface::initialize() {
+Error MPSSESWDDriver::initialize(uint32_t *idcode_out) {
   Check(mpsse_setup(*_ftdi));
-  Check(reset_swd());
+
+  // SWD line reset sequence: 50 bits with SWDIO held high.
+  uint8_t commands[] = {
+    SET_BITS_LOW, kStateResetSWD, kDirWrite,
+    CLK_BYTES, FTL(6), FTH(6),  // 48 bits...
+    CLK_BITS, FTL(2),           // ...and two more.
+    SET_BITS_LOW, kStateIdle, kDirWrite,
+    CLK_BITS, FTL(1),
+  };
+
+  CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
+          sizeof(commands));
 
   uint32_t idcode;
-  Check(read(DebugAccessPort::kDPIDCODE, true, &idcode));
+  Check(read(DebugAccessPort::kRegIDCODE, true, &idcode));
 
   uint32_t version = idcode >> 28;
   uint32_t partno = (idcode >> 12) & 0xFFFF;
@@ -193,45 +213,31 @@ Error SWDInterface::initialize() {
   debug(1, "  Part:     %X", partno);
   debug(1, "  Designer: %X", designer);
 
+  if (idcode_out) *idcode_out = idcode;
+
   return success;
 }
 
 
-Error SWDInterface::reset_target() {
+Error MPSSESWDDriver::reset_target(uint32_t microseconds) {
   uint8_t commands[] = { SET_BITS_LOW, 0 /* set below */, kDirWrite };
 
   commands[1] = kStateResetTarget;
   CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
           sizeof(commands));
 
-  usleep(100000);
+  usleep(microseconds);
 
   commands[1] = kStateIdle;
   CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
           sizeof(commands));
-  usleep(100000);
 
   return success;
 }
 
 
-Error SWDInterface::reset_swd() {
-  uint8_t commands[] = {
-    SET_BITS_LOW, kStateResetSWD, kDirWrite,
-    CLK_BYTES, FTL(6), FTH(6),
-    CLK_BITS, FTL(2),
-    SET_BITS_LOW, kStateIdle, kDirWrite,
-    CLK_BITS, FTL(1),
-  };
-
-  CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
-          sizeof(commands));
-
-  return success;
-}
-
-Error SWDInterface::read(int addr, bool debug_port, uint32_t *data) {
-  uint8_t commands1[] = {
+Error MPSSESWDDriver::read(unsigned addr, bool debug_port, uint32_t *data) {
+  uint8_t request_commands[] = {
     // Send SWD request byte
     MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
         swd_request(addr, debug_port, false),
@@ -244,13 +250,13 @@ Error SWDInterface::read(int addr, bool debug_port, uint32_t *data) {
     MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
   };
 
-  uint8_t commands2[] = {
+  uint8_t data_commands[] = {
     // Read in the data and parity fields.
     MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB, FTL(4), FTH(4),
     MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(2),
   };
 
-  uint8_t commands3[] = {
+  uint8_t cleanup_commands[] = {
     // Take the bus back and clock out a turnaround bit.
     SET_BITS_LOW, kStateIdle, kDirWrite,
     CLK_BITS, FTL(1),
@@ -259,30 +265,19 @@ Error SWDInterface::read(int addr, bool debug_port, uint32_t *data) {
 
   uint8_t response[6];
 
-  uint8_t ack = 0;
-  for (int retry = 0; retry < 100; ++retry) {
-    // response[0]: the three-bit response, MSB-justified.
-    Check(mpsse_transaction(_ftdi, commands1, sizeof(commands1),
-                                   response, 1,
-                                   1000));
-    ack = response[0] >> 5;
-
-    if (ack != 0x2) break;
-
-    debug(3, "SWD read got response %u, retrying...", ack);
-    usleep(10000);
-  }
-
-  Error check_error = success;
-  CheckCleanupEQ(ack, 0x1, reset_link);
-
-  // response[4:1]: the 32-bit response word.
-  // response[5]: the parity bit in bit 6, turnaround (ignored) in bit 7.
-  Check(mpsse_transaction(_ftdi, commands2, sizeof(commands2),
-                                 response + 1, sizeof(response) - 1,
+  // response[0]: the three-bit response, MSB-justified.
+  Check(mpsse_transaction(_ftdi, request_commands, sizeof(request_commands),
+                                 response, 1,
                                  1000));
+  uint8_t ack = response[0] >> 5;
 
-  {
+  if (ack == 0x01) {  // SWD OK
+    // Read the data phase.
+    // response[4:1]: the 32-bit response word.
+    // response[5]: the parity bit in bit 6, turnaround (ignored) in bit 7.
+    Check(mpsse_transaction(_ftdi, data_commands, sizeof(data_commands),
+                                   response + 1, sizeof(response) - 1,
+                                   1000));
     // Check for parity error.
     uint32_t data_temp = response[1]
                        | response[2] << 8
@@ -296,16 +291,22 @@ Error SWDInterface::read(int addr, bool debug_port, uint32_t *data) {
     if (data) *data = data_temp;
   }
  
-reset_link:
-  if (check_error != success) {
-    debug(3, "SWD error %d; taking link back", ack);
+  CheckEQ(ftdi_write_data(_ftdi, cleanup_commands, sizeof(cleanup_commands)),
+          sizeof(cleanup_commands));
+
+  switch (ack) {
+    case 1:  return success;
+    case 2:  return try_again;
+    case 4:  return failure;
+
+    default:
+      warning("Received unexpected SWD response %u", ack);
+      return failure;
   }
-  Check(mpsse_transaction(_ftdi, commands3, sizeof(commands3), 0, 0, 1000));
-  return check_error;
 }
 
-Error SWDInterface::write(int addr, bool debug_port, uint32_t data) {
-  uint8_t commands1[] = {
+Error MPSSESWDDriver::write(unsigned addr, bool debug_port, uint32_t data) {
+  uint8_t request_commands[] = {
     // Write request byte.
     MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
         swd_request(addr, debug_port, true),
@@ -321,7 +322,7 @@ Error SWDInterface::write(int addr, bool debug_port, uint32_t data) {
     CLK_BITS, FTL(1),
   };
 
-  uint8_t commands2[] = {
+  uint8_t data_commands[] = {
     // Send the data word.
     MPSSE_DO_WRITE | MPSSE_LSB, FTL(4), FTH(4),
     (data >>  0) & 0xFF,
@@ -334,126 +335,24 @@ Error SWDInterface::write(int addr, bool debug_port, uint32_t data) {
   };
 
   uint8_t response[1];
-  uint8_t ack;
-  for (int retry = 0; retry < 100; ++retry) {
-    Check(mpsse_transaction(_ftdi, commands1, sizeof(commands1),
-                                   response, sizeof(response),
-                                   1000));
+  Check(mpsse_transaction(_ftdi, request_commands, sizeof(request_commands),
+                                 response, sizeof(response),
+                                 1000));
   
-    ack = response[0] >> 5;
-    if (ack != 0x2) break;
-    debug(3, "Got response %u for SWD write (%X, %d, %08X), retrying...",
-        ack, addr, debug_port, data);
-    usleep(10000);
+  uint8_t ack = response[0] >> 5;
+
+  if (ack == 1) {  // SWD OK
+    CheckEQ(ftdi_write_data(_ftdi, data_commands, sizeof(data_commands)),
+            sizeof(data_commands));
   }
 
-  CheckEQ(ack, 0x1);  // Require OK response.
+  switch (ack) {
+    case 1: return success;
+    case 2: return try_again;
+    case 4: return failure;
 
-  Check(mpsse_transaction(_ftdi, commands2, sizeof(commands2),
-                                 response, 0,
-                                 1000));
-
-  debug(3, "SWD write (%X, %d, %08X) complete.", addr, debug_port, data);
-
-  return success;
-}
-
-
-/*
- * Implementation of DebugAccessPort.
- */
-
-DebugAccessPort::DebugAccessPort(SWDInterface *swd) : _swd(*swd) {}
-
-Error DebugAccessPort::read_idcode(uint32_t *data) {
-  return _swd.read(kDPIDCODE, true, data);
-}
-
-Error DebugAccessPort::write_abort(uint32_t data) {
-  return _swd.write(kDPABORT, true, data);
-}
-
-Error DebugAccessPort::read_ctrlstat_wcr(uint32_t *data) {
-  return _swd.read(kDPCTRLSTAT, true, data);
-}
-
-Error DebugAccessPort::write_ctrlstat_wcr(uint32_t data) {
-  return _swd.write(kDPCTRLSTAT, true, data);
-}
-
-Error DebugAccessPort::write_select(uint32_t data) {
-  return _swd.write(kDPSELECT, true, data);
-}
-
-Error DebugAccessPort::read_resend(uint32_t *data) {
-  return _swd.read(kDPRESEND, true, data);
-}
-
-Error DebugAccessPort::read_rdbuff(uint32_t *data) {
-  return _swd.read(kDPRDBUFF, true, data);
-}
-
-Error DebugAccessPort::post_read_ap_in_bank(int addr) {
-  return _swd.read(addr, false, 0);
-}
-
-Error DebugAccessPort::read_ap_in_bank_pipelined(int addr, uint32_t *last) {
-  return _swd.read(addr, false, last);
-}
-
-Error DebugAccessPort::write_ap_in_bank(int addr, uint32_t data) {
-  return _swd.write(addr, false, data);
-}
-
-Error DebugAccessPort::select_ap_bank(uint8_t ap, uint8_t bank) {
-  return write_select((ap << 24) | ((bank & 0xF) << 4));
-}
-
-Error DebugAccessPort::reset_state() {
-  Check(write_select(0));  // Reset SELECT.
-  Check(write_abort(1 << 2));  // Clear STKERR.
-  Check(write_ctrlstat_wcr((1 << 30)     // CSYSPWRUPREQ
-                         | (1 << 28)));  // CDBGPWRUPREQ
-  return success;
-}
-
-
-/*
- * Implementation of AccessPort
- */
-
-AccessPort::AccessPort(DebugAccessPort *dap, uint8_t ap)
-    : _dap(*dap), _ap(ap) {}
-
-uint8_t AccessPort::index() const {
-  return _ap;
-}
-
-Error AccessPort::post_read(uint8_t address) {
-  Check(_dap.select_ap_bank(_ap, address >> 4));
-  return _dap.post_read_ap_in_bank((address & 0xF) >> 2);
-}
-
-Error AccessPort::read_pipelined(uint8_t address, uint32_t *lastData) {
-  Check(_dap.select_ap_bank(_ap, address >> 4));
-  return _dap.read_ap_in_bank_pipelined((address & 0xF) >> 2, lastData);
-}
-
-Error AccessPort::read_last_result(uint32_t *lastData) {
-  return _dap.read_rdbuff(lastData);
-}
-
-Error AccessPort::read_blocking(uint8_t address, uint32_t *data,
-    uint32_t tries) {
-  Check(post_read(address));
-  return read_last_result(data);
-}
-
-Error AccessPort::write(uint8_t address, uint32_t data) {
-  Check(_dap.select_ap_bank(_ap, address >> 4));
-  return _dap.write_ap_in_bank((address & 0xF) >> 2, data);
-}
-
-DebugAccessPort &AccessPort::dap() {
-  return _dap;
+    default:
+      warning("Received unexpected SWD response %u", ack);
+      return failure;
+  }
 }

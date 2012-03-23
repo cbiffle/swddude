@@ -26,7 +26,9 @@
  */
 
 #include "target.h"
-#include "swd_interface.h"
+#include "swd_dp.h"
+#include "swd_mpsse.h"
+#include "swd.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
@@ -189,11 +191,11 @@ static Error dump_flash(Target &target) {
 }
 /******************************************************************************/
 static Error run_experiment(ftdi_context &ftdi) {
-  SWDInterface swd(&ftdi);
+  MPSSESWDDriver swd(&ftdi);
   Check(swd.initialize());
-  Check(swd.reset_target());
+  Check(swd.reset_target(100000));
 
-  DebugAccessPort dap(&swd);
+  DebugAccessPort dap(swd);
   Check(dap.reset_state());
 
   Target target(&swd, &dap, 0);
@@ -248,7 +250,7 @@ static Error run_experiment(ftdi_context &ftdi) {
     Check(program_flash(target, program, input_length / sizeof(uint32_t)));
     Check(dump_flash(target));
 
-    Check(swd.reset_target());
+    Check(swd.reset_target(100000));
 
 wrong_size:
     input.close();
