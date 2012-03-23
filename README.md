@@ -4,7 +4,7 @@ swddude
 *`swddude` is very young pre-alpha software.  Caveat downloader.*
 
 `swddude` is a simple program that can flash code onto ARM Cortex
-microcontrollers, such as the Cortex-M0, using SWD.  It's designed to use
+microcontrollers, such as the Cortex-M0 and M3, using SWD.  It's designed to use
 programming interfaces built on the FTDI FT232H interface chip.
 
 
@@ -23,15 +23,24 @@ Anton Staaf) I wrote `swddude` to scratch this itch.
 What Can It Do?
 ---------------
 
-Out of the box, `swddude` can flash code onto the NXP LPC11xx series.  It almost
-supports the larger Cortex-M3 parts as well, like the LPC13xx -- stay tuned!
+Out of the box, `swddude` can flash code onto the following chips:
+
+ * NXP LPC11xx series (Cortex-M0 based).
+ * NXP LPC13xx series (Cortex-M3 based).
+
+It may also work with other NXP Cortex parts that have similar memory maps and
+IAP invocation methods, such as the LPC17xx series.
+
+It was designed very specifically for this purpose, and extending it to other
+varieties of chips will require refactoring.  I'm likely to do this soon,
+because I'd like to add support for (at least) the STM32 and LPC18xx.
 
 
 How Do I Use It?
 ----------------
 
-You'll need an FTDI FT232H breakout board -- and, of course, a microcontroller
-with a SWD interface.  For now, it's best to use an LPC11xx series.
+You'll need an FTDI FT232H breakout board -- and, of course, a supported
+microcontroller with a SWD interface.
 
 Wire up your micro using the configuration described in `swd_mpsse.h`.
 
@@ -62,11 +71,11 @@ option.
 Status and Known Issues
 -----------------------
 
-`swddude` can flash the LPC1114 on the LPCxpresso breakout board, as long as the
-proprietary programming system (on the side of the board with the USB connector)
-has been disabled (by cutting the bridge traces).
-
-It can *almost* flash the LPC1343.  Stay tuned.
+`swddude` can flash the LPC1114 and LPC1343 on their respective LPCxpresso
+breakout boards, as long as the proprietary programming system (on the side of
+the board with the USB connector) has been disabled by cutting the bridge
+traces.  Personally, I cut my board in half using a razor saw and scrapped the
+proprietary side for parts.
 
 Known issues:
 
@@ -77,6 +86,9 @@ Known issues:
  * `swddude` makes no attempt at identifying the chip it's programming.  If you
    try programming an unsupported chip, it may do very bad things -- there is no
    safety net.
+ * On the LPC1343 specifically, the SWD interfaces sometimes gets "stuck" and
+   requires a power-cycle.  This will show up as failures very early during
+   communication (often referencing the IDCODE register).
 
 
 Brief Tour of the Source
