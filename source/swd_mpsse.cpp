@@ -106,7 +106,7 @@ Error setup_buffers(ftdi_context &ftdi) {
   CheckP(ftdi_read_data_get_chunksize(&ftdi, &read));
   CheckP(ftdi_write_data_get_chunksize(&ftdi, &write));
 
-  debug(1, "Chunksize (r/w): %u/%u", read, write);
+  debug(4, "Chunksize (r/w): %u/%u", read, write);
 
   return success;
 }
@@ -124,7 +124,7 @@ Error mpsse_transaction(ftdi_context *ftdi,
                                          response_count - count));
 
     if (count >= response_count) {
-      debug(3, "Response took %d attempts.", i);
+      debug(5, "MPSSE Response took %d attempts.", i + 1);
       return success;
     }
 
@@ -208,10 +208,10 @@ Error MPSSESWDDriver::initialize(uint32_t *idcode_out) {
   uint32_t partno = (idcode >> 12) & 0xFFFF;
   uint32_t designer = (idcode >> 1) & 0x7FF;
 
-  debug(1, "Debug Port IDCODE = %08X", idcode);
-  debug(1, "  Version:  %X", version);
-  debug(1, "  Part:     %X", partno);
-  debug(1, "  Designer: %X", designer);
+  debug(4, "Debug Port IDCODE = %08X", idcode);
+  debug(4, "  Version:  %X", version);
+  debug(4, "  Part:     %X", partno);
+  debug(4, "  Designer: %X", designer);
 
   if (idcode_out) *idcode_out = idcode;
 
@@ -237,6 +237,8 @@ Error MPSSESWDDriver::reset_target(uint32_t microseconds) {
 
 
 Error MPSSESWDDriver::read(unsigned addr, bool debug_port, uint32_t *data) {
+  debug(4, "MPSSE SWD READ %08X %d", addr, debug_port);
+
   uint8_t request_commands[] = {
     // Send SWD request byte
     MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
@@ -271,6 +273,7 @@ Error MPSSESWDDriver::read(unsigned addr, bool debug_port, uint32_t *data) {
                                  1000));
   uint8_t ack = response[0] >> 5;
 
+  debug(4, "SWD read got response %u", ack);
   if (ack == 0x01) {  // SWD OK
     // Read the data phase.
     // response[4:1]: the 32-bit response word.
@@ -285,7 +288,7 @@ Error MPSSESWDDriver::read(unsigned addr, bool debug_port, uint32_t *data) {
                        | response[4] << 24;
     uint8_t parity = (response[5] >> 6) & 1;
     CheckEQ(parity, swd_parity(data_temp));
-    debug(3, "SWD read (%X, %d) = %08X complete with status %d",
+    debug(4, "SWD read (%X, %d) = %08X complete with status %d",
         addr, debug_port, data_temp, ack);
     // All is well!
     if (data) *data = data_temp;
@@ -306,6 +309,8 @@ Error MPSSESWDDriver::read(unsigned addr, bool debug_port, uint32_t *data) {
 }
 
 Error MPSSESWDDriver::write(unsigned addr, bool debug_port, uint32_t data) {
+  debug(4, "MPSSE SWD WRITE %08X %d %08X", addr, debug_port, data);
+
   uint8_t request_commands[] = {
     // Write request byte.
     MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
