@@ -41,6 +41,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <ftdi.h>
+#include <inttypes.h>
 
 using namespace Err;
 using namespace Log;
@@ -66,9 +67,13 @@ namespace CommandLine
       null };
 }
 /******************************************************************************/
-static Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_table) {
+static Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_table, uint32_t stack) {
+  debug(2, "invoke_iap: param_table=%08X, result_table=%08X, stack=%08X",
+      param_table, result_table, stack);
+
   Check(target.write_register(Target::kR0, param_table));
   Check(target.write_register(Target::kR1, result_table));
+  Check(target.write_register(Target::kRStack, stack));
   Check(target.write_register(Target::kRDebugReturn, 0x1FFF1FF0));
 
   // Tell the CPU to return into RAM, and catch it there with a breakpoint.
@@ -77,14 +82,21 @@ static Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_ta
 
   Check(target.reset_halt_state());
 
-  debug(2, "Invoking IAP function...");
   Check(target.resume());
   bool halted = false;
   uint32_t attempts = 0;
   do {
     Check(target.is_halted(&halted));
-    usleep(1000);
+    usleep(10000);
   } while (++attempts < 100 && !halted);
+
+  if (!halted) {
+    warning("Target did not halt after IAP execution!");
+    Check(target.halt());
+    uint32_t pc;
+    Check(target.read_register(Target::kR15, &pc));
+    warning("Target forceably halted at %08X", pc);
+  }
 
   uint32_t reason;
   Check(target.read_halt_state(&reason));
@@ -92,22 +104,24 @@ static Error invoke_iap(Target &target, uint32_t param_table, uint32_t result_ta
     return success;
   }
 
-  if (!reason) {
-    warning("Target did not halt (or resume)");
-    Check(target.halt());
-    uint32_t pc;
-    Check(target.read_register(Target::kR15, &pc));
-    warning("Target forceably halted at %08X", pc);
+  uint32_t icsr;
+  Check(target.read_word(0xE000ED04, &icsr));
+  warning("ICSR = %08X", icsr);
 
-    uint32_t icsr;
-    Check(target.read_word(0xE000ED04, &icsr));
-    warning("ICSR = %08X", icsr);
-  } else {
-    uint32_t pc;
-    Check(target.read_register(Target::kR15, &pc));
-    warning("Target halted for unexpected reason at %08X", pc);
+  uint32_t cfsr;
+  Check(target.read_word(0xE000ED28, &cfsr));
+  warning("CFSR = %08X", cfsr);
+
+  uint32_t bfar;
+  Check(target.read_word(0xE000ED38, &bfar));
+  warning("BFAR = %08X", bfar);
+
+  for (int i = 0; i < 16; ++i) {
+    uint32_t r;
+    Check(target.read_register(Target::RegisterNumber(i), &r));
+    warning("r%d = %08X", i, r);
   }
-  return success;
+  return failure;
 }
 /******************************************************************************/
 static Error unmap_boot_sector(Target &target) {
@@ -115,21 +129,21 @@ static Error unmap_boot_sector(Target &target) {
 }
 /******************************************************************************/
 static Error program_flash(Target &target, void const *program, size_t word_count) {
-  // Only support single-sector writes for now.
-  uint32_t iap_table = 0x10000000;
-  uint32_t ram_buffer = 0x10000100;
+  uint32_t iap_table = 0x10000000;  // Used for param and response: 20B
+  uint32_t ram_buffer = 0x10000020;  // 256B
+  uint32_t stack = 0x10000220;
 
   // Ensure that the boot Flash isn't visible (will mess us up).
   Check(unmap_boot_sector(target));
 
   // Erase affected sectors.  Assumes uniform 4KiB sectors for now.
-  size_t const lastSector = (word_count * sizeof(uint32_t) + 4095) / 4096;
+  size_t const lastSector = (word_count * sizeof(uint32_t)) / 4096;
   // Unprotect affected sectors.
   debug(1, "Unprotecting Flash sectors 0-%lu...", lastSector);
   Check(target.write_word(iap_table + 0, 50));
   Check(target.write_word(iap_table + 4, 0));
   Check(target.write_word(iap_table + 8, lastSector));
-  Check(invoke_iap(target, iap_table, iap_table));
+  Check(invoke_iap(target, iap_table, iap_table, stack));
   uint32_t iap_result;
   Check(target.read_word(iap_table + 0, &iap_result));
   CheckEQ(iap_result, 0);
@@ -140,41 +154,59 @@ static Error program_flash(Target &target, void const *program, size_t word_coun
   Check(target.write_word(iap_table +  4, 0));
   Check(target.write_word(iap_table +  8, lastSector));
   Check(target.write_word(iap_table + 12, 12000));
-  Check(invoke_iap(target, iap_table, iap_table));
+  Check(invoke_iap(target, iap_table, iap_table, stack));
   Check(target.read_word(iap_table + 0, &iap_result));
   CheckEQ(iap_result, 0);
 
   // Copy program to RAM, then to Flash, in 256 byte chunks.
-  for (unsigned block = 0;
-       block < word_count;
-       block += (256 / sizeof(uint32_t))) {
-    size_t block_size = word_count - block;
-    if (block_size > 256) block_size = 256;
+  uint32_t const bytes_per_block = 256;
+  uint32_t const words_per_block = bytes_per_block / sizeof(uint32_t);
+  uint32_t const block_count =
+      (word_count + words_per_block - 1) / words_per_block;
+  uint32_t const *program_words = (uint32_t const *) program;
 
-    debug(1, "Copying %lu words starting with #%u", block_size, block);
-    Check(target.write_words(&program[block], ram_buffer, block_size));
+  for (uint32_t block = 0; block < block_count; ++block) {
+    uint32_t const block_offset = block * words_per_block;
+
+    uint32_t block_size = word_count - block_offset;
+    if (block_size > words_per_block) block_size = words_per_block;
+
+    debug(1, "Copying %"PRIu32" words starting with #%"PRIu32" to %08X",
+        block_size, block, ram_buffer);
+    Check(target.write_words(&program_words[block_offset],
+                             ram_buffer,
+                             block_size));
+
     // Unprotect the sector.
-    unsigned sector = block / 4096;
+    unsigned sector = block_offset * sizeof(uint32_t) / 4096;
     debug(1, "Unprotecting Flash sector %u", sector);
     Check(target.write_word(iap_table + 0, 50));
     Check(target.write_word(iap_table + 4, sector));
     Check(target.write_word(iap_table + 8, sector));
-    Check(invoke_iap(target, iap_table, iap_table));
+    Check(invoke_iap(target, iap_table, iap_table, stack));
     Check(target.read_word(iap_table + 0, &iap_result));
     CheckEQ(iap_result, 0);
 
     // Copy block to Flash
     debug(1, "Writing Flash...");
     Check(target.write_word(iap_table +  0, 51));
-    Check(target.write_word(iap_table +  4, block * sizeof(uint32_t)));
+    Check(target.write_word(iap_table +  4, block_offset * sizeof(uint32_t)));
     Check(target.write_word(iap_table +  8, ram_buffer));
     Check(target.write_word(iap_table + 12, 256));
     Check(target.write_word(iap_table + 16, 12000));
-    Check(invoke_iap(target, iap_table, iap_table));
+    Check(invoke_iap(target, iap_table, iap_table, stack));
     Check(target.read_word(iap_table + 0, &iap_result));
     CheckEQ(iap_result, 0);
   }
 
+  return success;
+}
+/******************************************************************************/
+static Error enable_faults(Target &target) {
+  Check(target.write_word(0xE000ED24, (1 << 18)  // Usage fault
+                                    | (1 << 17)  // Bus fault
+                                    | (1 << 16)  // Mem Manage fault
+                                    ));
   return success;
 }
 /******************************************************************************/
@@ -191,6 +223,8 @@ static Error dump_flash(Target &target) {
 }
 /******************************************************************************/
 static Error run_experiment(ftdi_context &ftdi) {
+  Error check_error = success;
+
   MPSSESWDDriver swd(&ftdi);
   Check(swd.initialize());
   Check(swd.reset_target(100000));
@@ -201,6 +235,8 @@ static Error run_experiment(ftdi_context &ftdi) {
   Target target(&swd, &dap, 0);
   Check(target.initialize());
   Check(target.halt());
+
+  Check(enable_faults(target));
 
   uint32_t pc;
   Check(target.read_register(Target::kR15, &pc));
@@ -225,7 +261,6 @@ static Error run_experiment(ftdi_context &ftdi) {
     input.seekg(0, ios::beg);
 
     uint8_t *program = 0;
-    Error check_error = success;
     CheckCleanupEQ(input_length, (input_length / 4) * 4, wrong_size);
 
     program = new uint8_t[input_length];
@@ -247,8 +282,16 @@ static Error run_experiment(ftdi_context &ftdi) {
       program_words[kCheckedVectors] = sum;
     }
 
-    Check(program_flash(target, program, input_length / sizeof(uint32_t)));
-    Check(dump_flash(target));
+    CheckCleanup(program_flash(target, program,
+                               input_length / sizeof(uint32_t)),
+                 report_failure_reason);
+    CheckCleanup(dump_flash(target),
+                 report_failure_reason);
+
+report_failure_reason:
+    uint32_t ctrlstat;
+    Check(dap.read_ctrlstat_wcr(&ctrlstat));
+    notice("Final CTRL/STAT = %08X", ctrlstat);
 
     Check(swd.reset_target(100000));
 
@@ -257,7 +300,7 @@ wrong_size:
     if (program) delete[] program;
   }
 
-  return success;
+  return check_error;
 }
 /******************************************************************************/
 static Error error_main(int argc, char const ** argv)
