@@ -249,6 +249,27 @@ static Error dump_flash(Target &target) {
  * swddude main implementation
  */
 
+static void fix_lpc_checksum(uint8_t program[], size_t program_length) {
+  const size_t kCheckedVectors = 7;
+
+  if (program_length < kCheckedVectors * sizeof(uint32_t)) {
+    warning("Program too short to write LPC checksum.");
+    return;
+  }
+
+  uint32_t *program_words = (uint32_t *) program;
+
+  uint32_t sum = 0;
+  for (size_t i = 0; i < kCheckedVectors; ++i) {
+    sum += program_words[i];
+  }
+  sum = 0 - sum;
+
+  debug(1, "Repairing LPC checksum: %08X", sum);
+
+  program_words[kCheckedVectors] = sum;
+}
+
 static Error flash_from_file(Target &target, char const *path) {
   Error check_error = success;
   uint8_t *program = 0;
@@ -270,15 +291,7 @@ static Error flash_from_file(Target &target, char const *path) {
   debug(1, "Read program of %zu bytes", input_length);
 
   if (CommandLine::fix_lpc_checksum.get()) {
-    const size_t kCheckedVectors = 7;
-    uint32_t sum = 0;
-    uint32_t *program_words = (uint32_t *) program;
-    for (size_t i = 0; i < kCheckedVectors; ++i) {
-      sum += program_words[i];
-    }
-    sum = 0 - sum;
-    debug(1, "Repairing LPC checksum: %08X", sum);
-    program_words[kCheckedVectors] = sum;
+    fix_lpc_checksum(program, input_length);
   }
 
   CheckCleanup(program_flash(target, program, input_length / sizeof(uint32_t)),
