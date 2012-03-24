@@ -75,6 +75,8 @@ namespace CommandLine
  * Flash programming implementation
  */
 
+static size_t const kIAPMinStack = 128;
+
 /*
  * Invokes a routine within In-Application Programming ROM of an LPC part.
  */
@@ -151,42 +153,98 @@ static Error unmap_boot_sector(Target &target) {
   return target.write_word(0x40048000, 2);
 }
 
+static Error unprotect_flash(Target &target, uint32_t work_addr,
+                                             uint32_t first_sector,
+                                             uint32_t last_sector) {
+  debug(1, "Unprotecting Flash sectors %"PRIu32"-%"PRIu32"...",
+      first_sector, last_sector);
+
+  uint32_t const cmd_addr = work_addr;
+  uint32_t const resp_addr = cmd_addr;  // Reuse same space.
+  uint32_t const stack_top = cmd_addr + 12 + kIAPMinStack;
+
+  // Build command table
+  Check(target.write_word(cmd_addr + 0, 50));
+  Check(target.write_word(cmd_addr + 4, first_sector));
+  Check(target.write_word(cmd_addr + 8, last_sector));
+
+  Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
+
+  uint32_t iap_result;
+  Check(target.read_word(resp_addr + 0, &iap_result));
+  CheckEQ(iap_result, 0);
+  return success;
+}
+
+static Error erase_flash(Target &target, uint32_t work_addr,
+                                         uint32_t first_sector,
+                                         uint32_t last_sector) {
+  debug(1, "Erasing Flash sectors %"PRIu32"-%"PRIu32"...",
+      first_sector, last_sector);
+
+  uint32_t const cmd_addr = work_addr;
+  uint32_t const resp_addr = cmd_addr;  // Reuse same space.
+  uint32_t const stack_top = cmd_addr + 16 + kIAPMinStack;
+
+  Check(target.write_word(cmd_addr +  0, 52));
+  Check(target.write_word(cmd_addr +  4, first_sector));
+  Check(target.write_word(cmd_addr +  8, last_sector));
+  Check(target.write_word(cmd_addr + 12, 12000));  // TODO hard-coded clock
+
+  Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
+
+  uint32_t iap_result;
+  Check(target.read_word(resp_addr + 0, &iap_result));
+  CheckEQ(iap_result, 0);
+  return success;
+}
+
+static Error copy_ram_to_flash(Target &target, uint32_t work_addr,
+                                               uint32_t src_addr,
+                                               uint32_t dest_addr,
+                                               size_t num_bytes) {
+  uint32_t const cmd_addr = work_addr;
+  uint32_t const resp_addr = cmd_addr;  // Reuse same space.
+  uint32_t const stack_top = cmd_addr + 20 + kIAPMinStack;
+
+  debug(1, "Writing Flash: %zu bytes at %"PRIx32, num_bytes, dest_addr);
+
+  Check(target.write_word(cmd_addr +  0, 51));
+  Check(target.write_word(cmd_addr +  4, dest_addr));
+  Check(target.write_word(cmd_addr +  8, src_addr));
+  Check(target.write_word(cmd_addr + 12, num_bytes));
+  Check(target.write_word(cmd_addr + 16, 12000));  // TODO hard-coded clock
+
+  Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
+
+  uint32_t iap_result;
+  Check(target.read_word(resp_addr + 0, &iap_result));
+  CheckEQ(iap_result, 0);
+  return success;
+}
+
+
 /*
  * Rewrites the target's flash memory.
  */
 static Error program_flash(Target &target, void const *program,
                                            size_t word_count) {
-  uint32_t iap_table = 0x10000000;  // Used for param and response: 20B
-  uint32_t ram_buffer = 0x10000020;  // 256B
-  uint32_t stack = 0x10000220;
+  uint32_t const bytes_per_block = 256;
+  uint32_t const ram_buffer = 0x10000000;
+  uint32_t const work_area = ram_buffer + bytes_per_block;
+
+  // The LPC11xx and LPC13xx parts use a uniform 4KiB protection/erase sector.
+  size_t const bytes_per_sector = 4096;
+  size_t const last_sector =
+      (word_count * sizeof(uint32_t)) / bytes_per_sector;  // Inclusive.
 
   // Ensure that the boot Flash isn't visible (will mess us up).
   Check(unmap_boot_sector(target));
 
-  // Erase affected sectors.  Assumes uniform 4KiB sectors for now.
-  size_t const lastSector = (word_count * sizeof(uint32_t)) / 4096;
-  // Unprotect affected sectors.
-  debug(1, "Unprotecting Flash sectors 0-%lu...", lastSector);
-  Check(target.write_word(iap_table + 0, 50));
-  Check(target.write_word(iap_table + 4, 0));
-  Check(target.write_word(iap_table + 8, lastSector));
-  Check(invoke_iap(target, iap_table, iap_table, stack));
-  uint32_t iap_result;
-  Check(target.read_word(iap_table + 0, &iap_result));
-  CheckEQ(iap_result, 0);
-
-  // Erase affected sectors.
-  debug(1, "Erasing...");
-  Check(target.write_word(iap_table +  0, 52));
-  Check(target.write_word(iap_table +  4, 0));
-  Check(target.write_word(iap_table +  8, lastSector));
-  Check(target.write_word(iap_table + 12, 12000));
-  Check(invoke_iap(target, iap_table, iap_table, stack));
-  Check(target.read_word(iap_table + 0, &iap_result));
-  CheckEQ(iap_result, 0);
+  Check(unprotect_flash(target, work_area, 0, last_sector));
+  Check(erase_flash(target, work_area, 0, last_sector));
 
   // Copy program to RAM, then to Flash, in 256 byte chunks.
-  uint32_t const bytes_per_block = 256;
   uint32_t const words_per_block = bytes_per_block / sizeof(uint32_t);
   uint32_t const block_count =
       (word_count + words_per_block - 1) / words_per_block;
@@ -204,26 +262,14 @@ static Error program_flash(Target &target, void const *program,
                              ram_buffer,
                              block_size));
 
-    // Unprotect the sector.
-    unsigned sector = block_offset * sizeof(uint32_t) / 4096;
-    debug(1, "Unprotecting Flash sector %u", sector);
-    Check(target.write_word(iap_table + 0, 50));
-    Check(target.write_word(iap_table + 4, sector));
-    Check(target.write_word(iap_table + 8, sector));
-    Check(invoke_iap(target, iap_table, iap_table, stack));
-    Check(target.read_word(iap_table + 0, &iap_result));
-    CheckEQ(iap_result, 0);
+    unsigned sector = block_offset * sizeof(uint32_t) / bytes_per_sector;
+    Check(unprotect_flash(target, work_area, sector, sector));
 
     // Copy block to Flash
-    debug(1, "Writing Flash...");
-    Check(target.write_word(iap_table +  0, 51));
-    Check(target.write_word(iap_table +  4, block_offset * sizeof(uint32_t)));
-    Check(target.write_word(iap_table +  8, ram_buffer));
-    Check(target.write_word(iap_table + 12, 256));
-    Check(target.write_word(iap_table + 16, 12000));
-    Check(invoke_iap(target, iap_table, iap_table, stack));
-    Check(target.read_word(iap_table + 0, &iap_result));
-    CheckEQ(iap_result, 0);
+    Check(copy_ram_to_flash(target, work_area,
+                                    ram_buffer,
+                                    block_offset * sizeof(uint32_t),
+                                    bytes_per_block));
   }
 
   return success;
