@@ -14,10 +14,11 @@ Why?
 Larger ARM microcontrollers have JTAG interfaces.  OpenOCD and friends already
 do a great job flashing these micros.  But for smaller parts, such as the
 LPC11xx/LPC13xx series, ARM has defined a new low-pin-count debug interface
-called SWD.  OpenOCD doesn't yet support SWD.
+called SWD.  OpenOCD doesn't yet support SWD.  In fact, when we started writing
+`swddude`, no software on Mac or Linux could do what we wanted!
 
-I wanted to use these little microcontrollers in my projects, so (with help from
-Anton Staaf) I wrote `swddude` to scratch this itch.
+It's a shame not to be able to use these powerful little microcontrollers, so we
+wrote `swddude` to scratch this itch.
 
 
 What Can It Do?
@@ -32,8 +33,9 @@ It may also work with other NXP Cortex parts that have similar memory maps and
 IAP invocation methods, such as the LPC17xx series.
 
 It was designed very specifically for this purpose, and extending it to other
-varieties of chips will require refactoring.  I'm likely to do this soon,
-because I'd like to add support for (at least) the STM32 and LPC18xx.
+varieties of chips will require refactoring.  We're likely to do this in the
+near future, because we've got a box of LPC18xx, STM32F4, and EnergyMicro eval
+boards just begging to be used.
 
 
 How Do I Use It?
@@ -74,8 +76,7 @@ Status and Known Issues
 `swddude` can flash the LPC1114 and LPC1343 on their respective LPCxpresso
 breakout boards, as long as the proprietary programming system (on the side of
 the board with the USB connector) has been disabled by cutting the bridge
-traces.  Personally, I cut my board in half using a razor saw and scrapped the
-proprietary side for parts.
+traces.
 
 Known issues:
 
