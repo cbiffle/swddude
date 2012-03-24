@@ -98,6 +98,7 @@ static Error invoke_iap(Target &target, uint32_t param_table,
   Check(target.reset_halt_state());
 
   Check(target.resume());
+
   bool halted = false;
   uint32_t attempts = 0;
   do {
@@ -111,32 +112,10 @@ static Error invoke_iap(Target &target, uint32_t param_table,
     uint32_t pc;
     Check(target.read_register(Target::kR15, &pc));
     warning("Target forceably halted at %08X", pc);
+    return failure;
   }
 
-  uint32_t reason;
-  Check(target.read_halt_state(&reason));
-  if (reason & Target::kHaltBkpt) {
-    return success;
-  }
-
-  uint32_t icsr;
-  Check(target.read_word(0xE000ED04, &icsr));
-  warning("ICSR = %08X", icsr);
-
-  uint32_t cfsr;
-  Check(target.read_word(0xE000ED28, &cfsr));
-  warning("CFSR = %08X", cfsr);
-
-  uint32_t bfar;
-  Check(target.read_word(0xE000ED38, &bfar));
-  warning("BFAR = %08X", bfar);
-
-  for (int i = 0; i < 16; ++i) {
-    uint32_t r;
-    Check(target.read_register(Target::RegisterNumber(i), &r));
-    warning("r%d = %08X", i, r);
-  }
-  return failure;
+  return success;
 }
 
 /*
