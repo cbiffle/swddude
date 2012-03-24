@@ -16,12 +16,19 @@ enum MEMAPRegister {
 };
 
 enum SCSRegister {
+  kSCS_AIRCR = 0xE000ED0C,
   kSCS_DFSR  = 0xE000ED30,
   kSCS_DHCSR = 0xE000EDF0,
   kSCS_DCRSR = 0xE000EDF4,
   kSCS_DCRDR = 0xE000EDF8,
   kSCS_DEMCR = 0xE000EDFC,
 };
+
+static uint32_t const kSCS_AIRCR_VECTKEY = 0x05FA << 16;
+static uint32_t const kSCS_AIRCR_VECTRESET = 1 << 0;
+
+static uint32_t const kSCS_DHCSR_S_HALT = 1 << 17;
+
 
 enum BPURegister {
   kBPU_CTRL = 0xE0002000,
@@ -181,8 +188,42 @@ Error Target::write_register(RegisterNumber reg, uint32_t data) {
   return success;
 }
 
+Error Target::reset_and_halt() {
+  // Save old DEMCR just in case.
+  uint32_t demcr;
+  Check(peek32(kSCS_DEMCR, &demcr));
+
+  // Write DEMCR back to request Vector Catch.
+  Check(poke32(kSCS_DEMCR, demcr | (1 << 0)  // VC_CORERESET
+                                 | (1 << 10)  // VC_HARDERR
+                                 | (1 << 24)));  // TRCENA
+
+  // Request a processor-local reset.
+  Check(poke32(kSCS_AIRCR, kSCS_AIRCR_VECTKEY | kSCS_AIRCR_VECTRESET));
+
+  // Wait for the processor to halt.
+  CheckRetry(poll_for_halt(1 << 3), 1000);
+
+  // Restore DEMCR.
+  Check(poke32(kSCS_DEMCR, demcr));
+
+  return success;
+}
+
 Error Target::halt() {
   return poke32(kSCS_DHCSR, (0xA05F << 16) | (1 << 1) | (1 << 0));
+}
+
+Error Target::poll_for_halt(uint32_t const dfsr_mask) {
+  uint32_t dhcsr;
+  Check(peek32(kSCS_DHCSR, &dhcsr));
+  uint32_t dfsr;
+  Check(peek32(kSCS_DFSR, &dfsr));
+
+  debug(3, "poll_for_halt: DHCSR=%08X DFSR=%08X", dhcsr, dfsr);
+
+  if ((dhcsr & kSCS_DHCSR_S_HALT) && (dfsr & dfsr_mask)) return success;
+  return try_again;
 }
 
 Error Target::resume() {

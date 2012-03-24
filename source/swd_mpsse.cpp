@@ -219,16 +219,18 @@ Error MPSSESWDDriver::initialize(uint32_t *idcode_out) {
 }
 
 
-Error MPSSESWDDriver::reset_target(uint32_t microseconds) {
-  uint8_t commands[] = { SET_BITS_LOW, 0 /* set below */, kDirWrite };
+Error MPSSESWDDriver::enter_reset() {
+  uint8_t commands[] = { SET_BITS_LOW, kStateResetTarget, kDirWrite };
 
-  commands[1] = kStateResetTarget;
   CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
           sizeof(commands));
 
-  usleep(microseconds);
+  return success;
+}
 
-  commands[1] = kStateIdle;
+Error MPSSESWDDriver::leave_reset() {
+  uint8_t commands[] = { SET_BITS_LOW, kStateIdle, kDirWrite };
+
   CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
           sizeof(commands));
 

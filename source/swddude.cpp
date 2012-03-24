@@ -336,12 +336,20 @@ static Error run_experiment(SWDDriver &swd) {
   DebugAccessPort dap(swd);
   Target target(swd, dap, 0);
 
-  // Initialize bus, reset/halt target, and load state.
   Check(swd.initialize());
-  Check(swd.reset_target(100000));
+
+  // Set up the initial DAP configuration while the target is in reset.
+  // The STM32 wants us to do this, and the others don't seem to mind.
+  Check(swd.enter_reset());
+  usleep(10000);
   Check(dap.reset_state());
   Check(target.initialize());
+  Check(target.reset_halt_state());
+  Check(swd.leave_reset());
+  usleep(100000);
+
   Check(target.halt());
+  Check(target.reset_and_halt());
 
   // Scope out the breakpoint unit.
   Check(target.enable_breakpoints());
@@ -361,7 +369,9 @@ static Error run_experiment(SWDDriver &swd) {
   }
 
 comms_failure:
-  Check(swd.reset_target(100000));
+  Check(swd.enter_reset());
+  usleep(100000);
+  Check(swd.leave_reset());
 
   return check_error;
 }

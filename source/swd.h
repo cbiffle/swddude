@@ -61,17 +61,22 @@ public:
   virtual Err::Error initialize(uint32_t *idcode = 0) = 0;
 
   /*
-   * Asserts the target's reset line for the specified time.  This is a
-   * system-level reset that destroys state in the Debug Access Port, and so
-   * it should be followed by a call to initialize().  Note that many CPUs also
-   * offer a "local reset" that leaves debug state unchanged; this can be
-   * accessed in a CPU-specific manner through the Debug Access Port.
+   * Asserts the target's reset line continuously until a call to leave_reset.
    *
    * Return values:
    *  Err::success - reset asserted.
    *  Err::failure - communications with interface failed.
    */
-  virtual Err::Error reset_target(uint32_t microseconds) = 0;
+  virtual Err::Error enter_reset() = 0;
+
+  /*
+   * Deasserts the target's reset line, allowing it to run.
+   *
+   * Return values:
+   *  Err::success - reset deasserted.
+   *  Err::failure - communications with interface failed.
+   */
+  virtual Err::Error leave_reset() = 0;
 
   /*
    * Reads a 32-bit register from either the Debug Access Port (when debug_port

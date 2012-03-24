@@ -26,7 +26,8 @@ public:
    */
 
   virtual Err::Error initialize(uint32_t *idcode = 0);
-  virtual Err::Error reset_target(uint32_t microseconds);
+  virtual Err::Error enter_reset();
+  virtual Err::Error leave_reset();
   virtual Err::Error read(unsigned address, bool debug_port, uint32_t *data);
   virtual Err::Error write(unsigned address, bool debug_port, uint32_t data);
 };

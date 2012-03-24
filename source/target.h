@@ -111,10 +111,24 @@ public:
   Err::Error write_register(RegisterNumber, uint32_t);
 
   /*
+   * Triggers a processor-local reset (leaving debug state unchanged) and asks
+   * the processor to halt after it's complete, before executing any code.  This
+   * may take a bit to complete.
+   */
+  Err::Error reset_and_halt();
+
+  /*
    * Halts the processor.  If the processor is already halted, this has no
    * effect.
    */
   Err::Error halt();
+
+  /*
+   * Checks whether the processor is halted with certain bits in DFSR set (given
+   * as a mask). If it isn't, returns Err::try_again.  Intended for use with
+   * CheckRetry.
+   */
+  Err::Error poll_for_halt(uint32_t dfsr_mask);
 
   /*
    * Resumes the halted processor at the address held in the Debug Return
@@ -145,16 +159,6 @@ public:
    * Clears the sticky halt state flags.
    */
   Err::Error reset_halt_state();
-
-  /*
-   * Issues a local (processor) reset without losing state in the debug unit.
-   */
-  Err::Error reset_processor();
-
-  /*
-   * Issues a complete (system) reset that may lose state in the debug unit.
-   */
-  Err::Error reset_system();
 
   /*
    * Enables hardware breakpoint support.
