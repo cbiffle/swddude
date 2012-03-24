@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, Cliff L. Biffle.
+ * Copyright (c) 2012, Anton Staaf, Cliff L. Biffle.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
