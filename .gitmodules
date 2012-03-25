@@ -1,0 +1,33 @@
+[submodule "build"]
+	path = build
+	url = git://source.socialhacker.com/build
+[submodule "libs/error"]
+	path = libs/error
+	url = git://source.socialhacker.com/libs/error
+[submodule "libs/command_line"]
+	path = libs/command_line
+	url = git://source.socialhacker.com/libs/command_line
+[submodule "libs/data"]
+	path = libs/data
+	url = git://source.socialhacker.com/libs/data
+[submodule "libs/files"]
+	path = libs/files
+	url = git://source.socialhacker.com/libs/files
+[submodule "libs/log"]
+	path = libs/log
+	url = git://source.socialhacker.com/libs/log
+[submodule "libs/reference"]
+	path = libs/reference
+	url = git://source.socialhacker.com/libs/reference
+[submodule "libs/string"]
+	path = libs/string
+	url = git://source.socialhacker.com/libs/string
+[submodule "libs/sys"]
+	path = libs/sys
+	url = git://source.socialhacker.com/libs/sys
+[submodule "libs/system"]
+	path = libs/system
+	url = git://source.socialhacker.com/libs/system
+[submodule "libs/types"]
+	path = libs/types
+	url = git://source.socialhacker.com/libs/types
