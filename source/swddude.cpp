@@ -38,6 +38,8 @@
 #include <iostream>
 #include <fstream>
 
+#define __STDC_FORMAT_MACROS
+
 #include <unistd.h>
 #include <stdio.h>
 #include <ftdi.h>
