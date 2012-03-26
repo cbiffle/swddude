@@ -73,12 +73,14 @@ static Error dump_flash(Target &target, unsigned n) {
 static Error run_experiment(ftdi_context &ftdi) {
   MPSSESWDDriver swd(&ftdi);
   Check(swd.initialize());
-  Check(swd.reset_target(100000));
+  Check(swd.enter_reset());
+  usleep(100000);
+  Check(swd.leave_reset());
 
   DebugAccessPort dap(swd);
   Check(dap.reset_state());
 
-  Target target(&swd, &dap, 0);
+  Target target(swd, dap, 0);
   Check(target.initialize());
   Check(target.halt());
 
