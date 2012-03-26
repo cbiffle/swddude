@@ -1,5 +1,11 @@
+# emacs temporary files
 *~
 
+# vim temporary files
+.swp
+.*.swp
+
+# build products
 release/
 debug/
 profile/
