@@ -8,6 +8,7 @@
 
 using Err::Error;
 using namespace Log;
+using namespace ARM;
 
 /*******************************************************************************
  * AP registers in the MEM-AP.
@@ -271,12 +272,7 @@ Error Target::write_word(uint32_t addr, uint32_t data)
  * Target public methods: register access
  */
 
-bool Target::is_register_implemented(int n)
-{
-    return n != 19 && n <= kRLast;
-}
-
-Error Target::read_register(RegisterNumber reg, uint32_t * out)
+Error Target::read_register(Register::Number reg, uint32_t * out)
 {
     Check(poke32(DCB::DCRSR, DCB::DCRSR_READ | (reg & 0x1F)));
 
@@ -290,7 +286,7 @@ Error Target::read_register(RegisterNumber reg, uint32_t * out)
     return peek32(DCB::DCRDR, out);
 }
 
-Error Target::write_register(RegisterNumber reg, uint32_t data)
+Error Target::write_register(Register::Number reg, uint32_t data)
 {
     Check(poke32(DCB::DCRDR, data));
     Check(poke32(DCB::DCRSR, DCB::DCRSR_WRITE | (reg & 0x1F)));

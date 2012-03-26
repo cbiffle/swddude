@@ -7,6 +7,8 @@
  * them into concepts familiar from debuggers like GDB.
  */
 
+#include "arm.h"
+
 #include "libs/error/error_stack.h"
 
 #include <stdint.h>
@@ -107,49 +109,16 @@ public:
     Err::Error write_word(uint32_t target_addr, uint32_t data);
 
     /*
-     * Register names for use with read_register/write_register, below.
-     * TODO: these names are somewhat grody.
-     */
-    enum RegisterNumber
-    {
-        // Basic numbered registers
-        kR0  =  0, kR1  =  1, kR2  =  2, kR3  =  3,
-        kR4  =  4, kR5  =  5, kR6  =  6, kR7  =  7,
-        kR8  =  8, kR9  =  9, kR10 = 10, kR11 = 11,
-        kR12 = 12, kR13 = 13, kR14 = 14, kR15 = 15,
-
-        // Special-purpose registers
-        kPSR = 16,
-        kMSP = 17,
-        kPSP = 18,
-        // 19 unused
-        kCONTROL_PRI_MASK = 20,
-
-        // Aliases for registers
-        kRStack = kR13,
-        kRLink  = kR14,
-        kRDebugReturn = kR15,
-
-        kRLast = kCONTROL_PRI_MASK,
-    };
-
-    /*
-     * Checks whether a register index is valid.
-     */
-    bool is_register_implemented(int r);
-
-
-    /*
      * Reads the contents of one of the processor's core or special-purpose
      * registers.  This will only work when the processor is halted.
      */
-    Err::Error read_register(RegisterNumber, uint32_t *);
+    Err::Error read_register(ARM::Register::Number, uint32_t *);
 
     /*
      * Replaces the contents of one of the processor's core or special-purpose
      * registers.  This will only work when the processor is halted.
      */
-    Err::Error write_register(RegisterNumber, uint32_t);
+    Err::Error write_register(ARM::Register::Number, uint32_t);
 
     /*
      * Triggers a processor-local reset (leaving debug state unchanged) and asks

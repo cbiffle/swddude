@@ -29,6 +29,7 @@
 #include "swd_dp.h"
 #include "swd_mpsse.h"
 #include "swd.h"
+#include "arm.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
@@ -47,6 +48,7 @@
 
 using namespace Err;
 using namespace Log;
+using namespace ARM;
 using std::vector;
 using std::ifstream;
 using std::ios;
@@ -88,13 +90,13 @@ static Error invoke_iap(Target &target, uint32_t param_table,
   debug(2, "invoke_iap: param_table=%08X, result_table=%08X, stack=%08X",
       param_table, result_table, stack);
 
-  Check(target.write_register(Target::kR0, param_table));
-  Check(target.write_register(Target::kR1, result_table));
-  Check(target.write_register(Target::kRStack, stack));
-  Check(target.write_register(Target::kRDebugReturn, 0x1FFF1FF0));
+  Check(target.write_register(Register::R0, param_table));
+  Check(target.write_register(Register::R1, result_table));
+  Check(target.write_register(Register::SP, stack));
+  Check(target.write_register(Register::PC, 0x1FFF1FF0));
 
   // Tell the CPU to return into RAM, and catch it there with a breakpoint.
-  Check(target.write_register(Target::kRLink, param_table | 1));
+  Check(target.write_register(Register::LR, param_table | 1));
   Check(target.enable_breakpoint(0, param_table));
 
   Check(target.reset_halt_state());
@@ -112,7 +114,7 @@ static Error invoke_iap(Target &target, uint32_t param_table,
     warning("Target did not halt after IAP execution!");
     Check(target.halt());
     uint32_t pc;
-    Check(target.read_register(Target::kR15, &pc));
+    Check(target.read_register(Register::PC, &pc));
     warning("Target forceably halted at %08X", pc);
     return failure;
   }
