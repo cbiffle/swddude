@@ -30,6 +30,7 @@
 #include "swd_mpsse.h"
 #include "swd.h"
 #include "arm.h"
+#include "lpc11xx_13xx.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
@@ -49,6 +50,8 @@
 using namespace Err;
 using namespace Log;
 using namespace ARM;
+using namespace LPC11xx_13xx;
+
 using std::vector;
 using std::ifstream;
 using std::ios;
@@ -79,8 +82,6 @@ namespace CommandLine
  * Flash programming implementation
  */
 
-static size_t const kIAPMinStack = 128;
-
 /*
  * Invokes a routine within In-Application Programming ROM of an LPC part.
  */
@@ -93,7 +94,7 @@ static Error invoke_iap(Target &target, uint32_t param_table,
   Check(target.write_register(Register::R0, param_table));
   Check(target.write_register(Register::R1, result_table));
   Check(target.write_register(Register::SP, stack));
-  Check(target.write_register(Register::PC, 0x1FFF1FF0));
+  Check(target.write_register(Register::PC, IAP::entry));
 
   // Tell the CPU to return into RAM, and catch it there with a breakpoint.
   Check(target.write_register(Register::LR, param_table | 1));
@@ -133,7 +134,8 @@ static Error invoke_iap(Target &target, uint32_t param_table,
  * The current implementation won't work on the LPC17xx.
  */
 static Error unmap_boot_sector(Target &target) {
-  return target.write_word(0x40048000, 2);
+  return target.write_word(SYSCON::SYSMEMREMAP,
+                           SYSCON::SYSMEMREMAP_MAP_USER_FLASH);
 }
 
 static Error unprotect_flash(Target &target, uint32_t work_addr,
@@ -144,10 +146,12 @@ static Error unprotect_flash(Target &target, uint32_t work_addr,
 
   uint32_t const cmd_addr = work_addr;
   uint32_t const resp_addr = cmd_addr;  // Reuse same space.
-  uint32_t const stack_top = cmd_addr + 12 + kIAPMinStack;
+  uint32_t const stack_top = cmd_addr
+                           + IAP::max_command_response_words * sizeof(word_t)
+                           + IAP::min_stack_bytes;
 
   // Build command table
-  Check(target.write_word(cmd_addr + 0, 50));
+  Check(target.write_word(cmd_addr + 0, IAP::Command::unprotect_sectors));
   Check(target.write_word(cmd_addr + 4, first_sector));
   Check(target.write_word(cmd_addr + 8, last_sector));
 
@@ -167,9 +171,11 @@ static Error erase_flash(Target &target, uint32_t work_addr,
 
   uint32_t const cmd_addr = work_addr;
   uint32_t const resp_addr = cmd_addr;  // Reuse same space.
-  uint32_t const stack_top = cmd_addr + 16 + kIAPMinStack;
+  uint32_t const stack_top = cmd_addr
+                           + IAP::max_command_response_words * sizeof(word_t)
+                           + IAP::min_stack_bytes;
 
-  Check(target.write_word(cmd_addr +  0, 52));
+  Check(target.write_word(cmd_addr +  0, IAP::Command::erase_sectors));
   Check(target.write_word(cmd_addr +  4, first_sector));
   Check(target.write_word(cmd_addr +  8, last_sector));
   Check(target.write_word(cmd_addr + 12, 12000));  // TODO hard-coded clock
@@ -188,11 +194,13 @@ static Error copy_ram_to_flash(Target &target, uint32_t work_addr,
                                                size_t num_bytes) {
   uint32_t const cmd_addr = work_addr;
   uint32_t const resp_addr = cmd_addr;  // Reuse same space.
-  uint32_t const stack_top = cmd_addr + 20 + kIAPMinStack;
+  uint32_t const stack_top = cmd_addr
+                           + IAP::max_command_response_words * sizeof(word_t)
+                           + IAP::min_stack_bytes;
 
   debug(1, "Writing Flash: %zu bytes at %"PRIx32, num_bytes, dest_addr);
 
-  Check(target.write_word(cmd_addr +  0, 51));
+  Check(target.write_word(cmd_addr +  0, IAP::Command::copy_ram_to_flash));
   Check(target.write_word(cmd_addr +  4, dest_addr));
   Check(target.write_word(cmd_addr +  8, src_addr));
   Check(target.write_word(cmd_addr + 12, num_bytes));

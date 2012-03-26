@@ -29,6 +29,7 @@
 #include "swd_dp.h"
 #include "swd_mpsse.h"
 #include "swd.h"
+#include "lpc11xx_13xx.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
@@ -40,6 +41,7 @@
 
 using namespace Err;
 using namespace Log;
+using namespace LPC11xx_13xx;
 
 /******************************************************************************/
 namespace CommandLine
@@ -56,7 +58,8 @@ namespace CommandLine
 }
 /******************************************************************************/
 static Error unmap_boot_sector(Target &target) {
-  return target.write_word(0x40048000, 2);
+  return target.write_word(SYSCON::SYSMEMREMAP,
+                           SYSCON::SYSMEMREMAP_MAP_USER_FLASH);
 }
 /******************************************************************************/
 static Error dump_flash(Target &target, unsigned n) {
