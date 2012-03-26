@@ -16,9 +16,11 @@ namespace MEM_AP
 {
     static uint32_t const CSW = 0x00;
     static uint32_t const CSW_RESERVED_mask = 0xFFFFF000;
+
     static uint32_t const CSW_ADDRINC_OFF    = 0 << 4;
     static uint32_t const CSW_ADDRINC_SINGLE = 1 << 4;
     static uint32_t const CSW_ADDRINC_PACKED = 2 << 4;
+
     static uint32_t const CSW_SIZE_1 = 0 << 0;
     static uint32_t const CSW_SIZE_2 = 1 << 0;
     static uint32_t const CSW_SIZE_4 = 2 << 0;
@@ -93,67 +95,82 @@ namespace BPU
 }
 
 /*******************************************************************************
- * Target implementation
+ * Target private methods
  */
-Target::Target(SWDDriver &swd, DebugAccessPort &dap, uint8_t mem_ap_index)
-    : _swd(swd), _dap(dap),
-      _mem_ap_index(mem_ap_index),
-      _current_ap_bank(-1) {}
 
-Error Target::select_bank_for_address(uint8_t address) {
-  uint8_t bank = address & 0xF0;
-  if (_current_ap_bank != bank) {
-    Check(_dap.select_ap_bank(_mem_ap_index, bank));
-    _current_ap_bank = bank;
-  }
-  return success;
+Error Target::select_bank_for_address(uint8_t address)
+{
+    uint8_t bank = address & 0xF0;
+
+    if (_current_ap_bank != bank) {
+        Check(_dap.select_ap_bank(_mem_ap_index, bank));
+        _current_ap_bank = bank;
+    }
+
+    return Err::success;
 }
 
-Error Target::write_ap(uint8_t address, uint32_t data) {
-  Check(select_bank_for_address(address));
-
-  return _dap.write_ap_in_bank(address, data);
+Error Target::write_ap(uint8_t address, uint32_t data)
+{
+    Check(select_bank_for_address(address));
+    return _dap.write_ap_in_bank(address, data);
 }
 
-Error Target::start_read_ap(uint8_t address) {
-  Check(select_bank_for_address(address));
-
-  return _dap.start_read_ap_in_bank(address);
+Error Target::start_read_ap(uint8_t address)
+{
+    Check(select_bank_for_address(address));
+    return _dap.start_read_ap_in_bank(address);
 }
 
-Error Target::step_read_ap(uint8_t nextAddress, uint32_t *lastData) {
-  Check(select_bank_for_address(nextAddress));
-  return _dap.step_read_ap_in_bank(nextAddress, lastData);
+Error Target::step_read_ap(uint8_t nextAddress, uint32_t * lastData)
+{
+    Check(select_bank_for_address(nextAddress));
+    return _dap.step_read_ap_in_bank(nextAddress, lastData);
 }
 
-Error Target::final_read_ap(uint32_t *data) {
-  Check(_dap.read_rdbuff(data));
-  return success;
+Error Target::final_read_ap(uint32_t * data)
+{
+    return _dap.read_rdbuff(data);
 }
 
-Error Target::peek32(uint32_t address, uint32_t *data) {
+Error Target::peek32(uint32_t address, uint32_t * data)
+{
   Check(write_ap(MEM_AP::TAR, address));
   CheckRetry(start_read_ap(MEM_AP::DRW), 100);
   CheckRetry(final_read_ap(data), 100);
 
   debug(3, "peek32(%08X) = %08X", address, *data);
-  return success;
+
+  return Err::success;
 }
 
-Error Target::poke32(uint32_t address, uint32_t data) {
+Error Target::poke32(uint32_t address, uint32_t data)
+{
   debug(3, "poke32(%08X, %08X)", address, data);
+
   Check(write_ap(MEM_AP::TAR, address));
   CheckRetry(write_ap(MEM_AP::DRW, data), 100);
 
   // Block waiting for write to complete.
-  uint32_t csw;
-  do {
+  uint32_t csw = (1 << 7);
+  while (csw & (1 << 7))
+  {
     CheckRetry(start_read_ap(MEM_AP::CSW), 100);
     Check(final_read_ap(&csw));
-  } while (csw & (1 << 7));
+  }
 
-  return success;
+  return Err::success;
 }
+
+/*******************************************************************************
+ * Target public methods
+ */
+
+Target::Target(SWDDriver &swd, DebugAccessPort &dap, uint8_t mem_ap_index) :
+    _swd(swd),
+    _dap(dap),
+    _mem_ap_index(mem_ap_index),
+    _current_ap_bank(-1) {}
 
 Error Target::initialize() {
   // We only use one AP.  Go ahead and select it and configure CSW.
