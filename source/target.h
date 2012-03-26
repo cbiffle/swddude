@@ -33,7 +33,7 @@ class Target
     Err::Error select_bank_for_address(uint8_t address);
 
     // Writes data to a register in AP #0, changing banks if required.
-    Err::Error write_ap(uint8_t address, uint32_t data);
+    Err::Error write_ap(uint8_t address, ARM::word_t data);
 
     /*
      * start_read_ap, step_read_ap, and final_read_ap map to the similarly-named
@@ -41,12 +41,12 @@ class Target
      * value and transparently change banks if required.
      */
     Err::Error start_read_ap(uint8_t address);
-    Err::Error step_read_ap(uint8_t nextAddress, uint32_t * lastData);
-    Err::Error final_read_ap(uint32_t * data);
+    Err::Error step_read_ap(uint8_t next_address, ARM::word_t * last_data);
+    Err::Error final_read_ap(ARM::word_t * data);
 
     // Implementation factors of read_word/write_word.  TODO: remove?
-    Err::Error peek32(uint32_t address, uint32_t * data);
-    Err::Error poke32(uint32_t address, uint32_t data);
+    Err::Error peek32(uint32_t address, ARM::word_t * data);
+    Err::Error poke32(uint32_t address, ARM::word_t data);
 
 public:
     Target(SWDDriver &, DebugAccessPort &, uint8_t mem_ap_index);
@@ -83,7 +83,7 @@ public:
      * small numbers of non-contiguous words around.
      */
     Err::Error read_word(uint32_t target_addr,
-                         uint32_t * host_buffer);
+                         ARM::word_t * host_buffer);
 
     /*
      * Reads some number of 32-bit words from the target into memory on the
@@ -106,19 +106,19 @@ public:
      * Single-word equivalent of write_words.  Slightly cheaper for moving
      * small numbers of non-contiguous words around.
      */
-    Err::Error write_word(uint32_t target_addr, uint32_t data);
+    Err::Error write_word(uint32_t target_addr, ARM::word_t data);
 
     /*
      * Reads the contents of one of the processor's core or special-purpose
      * registers.  This will only work when the processor is halted.
      */
-    Err::Error read_register(ARM::Register::Number, uint32_t *);
+    Err::Error read_register(ARM::Register::Number, ARM::word_t *);
 
     /*
      * Replaces the contents of one of the processor's core or special-purpose
      * registers.  This will only work when the processor is halted.
      */
-    Err::Error write_register(ARM::Register::Number, uint32_t);
+    Err::Error write_register(ARM::Register::Number, ARM::word_t);
 
     /*
      * Triggers a processor-local reset (leaving debug state unchanged) and asks
@@ -139,7 +139,7 @@ public:
      *
      * Note: a mask of all ones will match any halt condition.
      */
-    Err::Error poll_for_halt(uint32_t dfsr_mask);
+    Err::Error poll_for_halt(unsigned dfsr_mask);
 
     /*
      * Resumes the halted processor at the address held in the Debug Return
@@ -157,7 +157,7 @@ public:
      * result are set to a combination of the DFSR values defined in
      * ARMv6M_v7M::SCB.
      */
-    Err::Error read_halt_state(uint32_t *);
+    Err::Error read_halt_state(ARM::word_t *);
 
     /*
      * Clears the sticky halt state flags.

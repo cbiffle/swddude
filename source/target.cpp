@@ -50,7 +50,7 @@ Error Target::select_bank_for_address(uint8_t address)
     return Err::success;
 }
 
-Error Target::write_ap(uint8_t address, uint32_t data)
+Error Target::write_ap(uint8_t address, word_t data)
 {
     Check(select_bank_for_address(address));
     return _dap.write_ap_in_bank(address, data);
@@ -62,18 +62,18 @@ Error Target::start_read_ap(uint8_t address)
     return _dap.start_read_ap_in_bank(address);
 }
 
-Error Target::step_read_ap(uint8_t nextAddress, uint32_t * lastData)
+Error Target::step_read_ap(uint8_t next_address, word_t * last_data)
 {
-    Check(select_bank_for_address(nextAddress));
-    return _dap.step_read_ap_in_bank(nextAddress, lastData);
+    Check(select_bank_for_address(next_address));
+    return _dap.step_read_ap_in_bank(next_address, last_data);
 }
 
-Error Target::final_read_ap(uint32_t * data)
+Error Target::final_read_ap(word_t * data)
 {
     return _dap.read_rdbuff(data);
 }
 
-Error Target::peek32(uint32_t address, uint32_t * data)
+Error Target::peek32(uint32_t address, word_t * data)
 {
     Check(write_ap(MEM_AP::TAR, address));
     CheckRetry(start_read_ap(MEM_AP::DRW), 100);
@@ -84,7 +84,7 @@ Error Target::peek32(uint32_t address, uint32_t * data)
     return Err::success;
 }
 
-Error Target::poke32(uint32_t address, uint32_t data)
+Error Target::poke32(uint32_t address, word_t data)
 {
     debug(3, "poke32(%08X, %08X)", address, data);
 
@@ -92,7 +92,7 @@ Error Target::poke32(uint32_t address, uint32_t data)
     CheckRetry(write_ap(MEM_AP::DRW, data), 100);
 
     // Block waiting for write to complete.
-    uint32_t csw = MEM_AP::CSW_TRINPROG;
+    word_t csw = MEM_AP::CSW_TRINPROG;
     while (csw & MEM_AP::CSW_TRINPROG)
     {
         CheckRetry(start_read_ap(MEM_AP::CSW), 100);
@@ -116,13 +116,13 @@ Error Target::initialize()
 {
     // We only use one AP.  Go ahead and select it and configure CSW.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
-    uint32_t csw;
+    word_t csw;
     Check(final_read_ap(&csw));
     csw = (csw & MEM_AP::CSW_RESERVED_mask) | MEM_AP::CSW_SIZE_4;
     Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
     // Enable debugging.
-    uint32_t dhcsr;
+    word_t dhcsr;
     Check(peek32(DCB::DHCSR, &dhcsr));
     if ((dhcsr & (1 << 0)) == 0)
     {
@@ -143,11 +143,11 @@ Error Target::read_words(uint32_t target_addr,
                          void * host_buffer,
                          size_t count)
 {
-    uint32_t * host_buffer_as_words = static_cast<uint32_t *>(host_buffer);
+    word_t * host_buffer_as_words = static_cast<word_t *>(host_buffer);
 
     // Configure MEM-AP for auto-incrementing 32-bit transactions.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
-    uint32_t csw;
+    word_t csw;
     Check(final_read_ap(&csw));
     csw = (csw & MEM_AP::CSW_RESERVED_mask)
         | MEM_AP::CSW_ADDRINC_SINGLE
@@ -167,7 +167,7 @@ Error Target::read_words(uint32_t target_addr,
     return Err::success;
 }
 
-Error Target::read_word(uint32_t addr, uint32_t * data)
+Error Target::read_word(uint32_t addr, word_t * data)
 {
     return peek32(addr, data);
 }
@@ -176,12 +176,12 @@ Error Target::write_words(void const * host_buffer,
                           uint32_t target_addr,
                           size_t count)
 {
-    uint32_t const * host_buffer_as_words =
-        static_cast<uint32_t const *>(host_buffer);
+    word_t const * host_buffer_as_words =
+        static_cast<word_t const *>(host_buffer);
 
     // Configure MEM-AP for auto-incrementing 32-bit transactions.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
-    uint32_t csw;
+    word_t csw;
     Check(final_read_ap(&csw));
     csw = (csw & MEM_AP::CSW_RESERVED_mask)
         | MEM_AP::CSW_ADDRINC_SINGLE
@@ -199,7 +199,7 @@ Error Target::write_words(void const * host_buffer,
     return Err::success;
 }
 
-Error Target::write_word(uint32_t addr, uint32_t data)
+Error Target::write_word(uint32_t addr, word_t data)
 {
     return poke32(addr, data);
 }
@@ -209,11 +209,11 @@ Error Target::write_word(uint32_t addr, uint32_t data)
  * Target public methods: register access
  */
 
-Error Target::read_register(Register::Number reg, uint32_t * out)
+Error Target::read_register(Register::Number reg, word_t * out)
 {
     Check(poke32(DCB::DCRSR, DCB::DCRSR_READ | (reg & 0x1F)));
 
-    uint32_t dhcsr;
+    word_t dhcsr;
     do
     {
         Check(peek32(DCB::DHCSR, &dhcsr));
@@ -223,12 +223,12 @@ Error Target::read_register(Register::Number reg, uint32_t * out)
     return peek32(DCB::DCRDR, out);
 }
 
-Error Target::write_register(Register::Number reg, uint32_t data)
+Error Target::write_register(Register::Number reg, word_t data)
 {
     Check(poke32(DCB::DCRDR, data));
     Check(poke32(DCB::DCRSR, DCB::DCRSR_WRITE | (reg & 0x1F)));
 
-    uint32_t dhcsr;
+    word_t dhcsr;
     do
     {
         Check(peek32(DCB::DHCSR, &dhcsr));
@@ -246,7 +246,7 @@ Error Target::write_register(Register::Number reg, uint32_t data)
 Error Target::reset_and_halt()
 {
     // Save old DEMCR just in case.
-    uint32_t demcr;
+    word_t demcr;
     Check(peek32(DCB::DEMCR, &demcr));
 
     // Write DEMCR back to request Vector Catch.
@@ -273,11 +273,11 @@ Error Target::halt()
                             | DCB::DHCSR_C_DEBUGEN);
 }
 
-Error Target::poll_for_halt(uint32_t dfsr_mask)
+Error Target::poll_for_halt(unsigned dfsr_mask)
 {
-    uint32_t dhcsr;
+    word_t dhcsr;
     Check(peek32(DCB::DHCSR, &dhcsr));
-    uint32_t dfsr;
+    word_t dfsr;
     Check(peek32(SCB::DFSR, &dfsr));
 
     debug(3, "poll_for_halt: DHCSR=%08X DFSR=%08X", dhcsr, dfsr);
@@ -296,7 +296,7 @@ Error Target::resume()
 
 Error Target::is_halted(bool * flag)
 {
-    uint32_t dhcsr;
+    word_t dhcsr;
     Check(peek32(DCB::DHCSR, &dhcsr));
 
     *flag = dhcsr & DCB::DHCSR_S_HALT;
@@ -304,9 +304,9 @@ Error Target::is_halted(bool * flag)
     return Err::success;
 }
 
-Error Target::read_halt_state(uint32_t * out)
+Error Target::read_halt_state(word_t * out)
 {
-    uint32_t dfsr;
+    word_t dfsr;
     Check(peek32(SCB::DFSR, &dfsr));
 
     *out = dfsr & SCB::DFSR_reason_mask;
@@ -336,7 +336,7 @@ Error Target::disable_breakpoints()
 
 Error Target::are_breakpoints_enabled(bool * result)
 {
-    uint32_t ctrl;
+    word_t ctrl;
     Check(peek32(BPU::BP_CTRL, &ctrl));
 
     *result = ctrl & BPU::BP_CTRL_KEY;
@@ -346,7 +346,7 @@ Error Target::are_breakpoints_enabled(bool * result)
 
 Error Target::get_breakpoint_count(size_t * n)
 {
-    uint32_t ctrl;
+    word_t ctrl;
     Check(peek32(BPU::BP_CTRL, &ctrl));
 
     *n = (ctrl & BPU::BP_CTRL_NUM_CODE_mask) >> BPU::BP_CTRL_NUM_CODE_pos;
@@ -362,7 +362,7 @@ Error Target::enable_breakpoint(size_t n, uint32_t addr)
     if (addr & 0xE0000000) return Err::argument_error;
 
     // Break on upper or lower halfword, depending on bit 1 of address.
-    uint32_t reg = BPU::BP_COMP0 + (n * sizeof(uint32_t));
+    word_t reg = BPU::BP_COMP0 + (n * sizeof(word_t));
     return poke32(reg, ((addr & 2) ? BPU::BP_COMPx_MATCH_HIGH
                                    : BPU::BP_COMPx_MATCH_LOW)
                      | (addr & BPU::BP_COMPx_COMP_mask)
@@ -371,5 +371,5 @@ Error Target::enable_breakpoint(size_t n, uint32_t addr)
 
 Error Target::disable_breakpoint(size_t n)
 {
-    return poke32(BPU::BP_COMP0 + (n * sizeof(uint32_t)), 0);
+    return poke32(BPU::BP_COMP0 + (n * sizeof(word_t)), 0);
 }

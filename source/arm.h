@@ -5,8 +5,32 @@
  * Common definitions for ARM processors.
  */
 
+#include <stdint.h>
+
+
 namespace ARM
 {
+
+/*******************************************************************************
+ * Basic architectural data types
+ *
+ * These types are defined in section A2.2 of the architecture reference manual,
+ * and used consistently throughout the manual to specify the sizes of things.
+ *
+ * The typedefs are useful when we're treating a value (such as the contents of
+ * a register) as an opaque quantity, where only the size matters, rather than
+ * signedness.
+ */
+
+typedef uint64_t doubleword_t;
+typedef uint32_t word_t;
+typedef uint16_t halfword_t;
+typedef uint8_t  byte_t;
+
+
+/*******************************************************************************
+ * ARM Core Registers
+ */
 
 namespace Register {
 
