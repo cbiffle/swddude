@@ -153,21 +153,9 @@ public:
     Err::Error is_halted(bool *);
 
     /*
-     * Halt reason masks for use with read_halt_state.
-     * TODO: names are grody.
-     */
-    enum HaltReason
-    {
-        kHaltPerSe    = 0x1,
-        kHaltBkpt     = 0x2,
-        kHaltDWT      = 0x4,
-        kHaltVCatch   = 0x8,
-        kHaltExternal = 0x10,
-    };
-
-    /*
      * Finds out why the processor is halted, assuming it's halted.  Bits in the
-     * result are set to a combination of HaltReasons, above.
+     * result are set to a combination of the DFSR values defined in
+     * ARMv6M_v7M::SCB.
      */
     Err::Error read_halt_state(uint32_t *);
 

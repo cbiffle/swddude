@@ -2,6 +2,7 @@
 
 #include "swd_dp.h"
 #include "swd.h"
+#include "armv6m_v7m.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
@@ -9,6 +10,7 @@
 using Err::Error;
 using namespace Log;
 using namespace ARM;
+using namespace ARMv6M_v7M;
 
 /*******************************************************************************
  * AP registers in the MEM-AP.
@@ -30,71 +32,6 @@ namespace MEM_AP
 
     static uint32_t const TAR = 0x04;
     static uint32_t const DRW = 0x0C;
-}
-
-/*******************************************************************************
- * The System Control Block.
- */
-namespace SCB
-{
-    static uint32_t const AIRCR = 0xE000ED0C;
-    static uint32_t const AIRCR_VECTKEY = 0x05FA << 16;
-    static uint32_t const AIRCR_VECTRESET = 1 << 0;
-
-    static uint32_t const DFSR  = 0xE000ED30;
-    static uint32_t const DFSR_VCATCH = 1 << 3;
-    static uint32_t const DFSR_reason_mask = 0x1F;
-}
-
-/*******************************************************************************
- * The Debug Control Block.
- */
-namespace DCB
-{
-    static uint32_t const DHCSR = 0xE000EDF0;
-    static uint32_t const DHCSR_update_mask = 0xFFFF;
-    static uint32_t const DHCSR_DBGKEY    = 0xA05F << 16;
-    static uint32_t const DHCSR_S_REGRDY  =      1 << 16;
-    static uint32_t const DHCSR_C_HALT    =      1 <<  1;
-    static uint32_t const DHCSR_C_DEBUGEN =      1 <<  0;
-
-    static uint32_t const DCRSR = 0xE000EDF4;
-    static uint32_t const DCRSR_READ  = 0 << 16;
-    static uint32_t const DCRSR_WRITE = 1 << 16;
-
-    static uint32_t const DCRDR = 0xE000EDF8;
-
-    static uint32_t const DEMCR = 0xE000EDFC;
-    static uint32_t const DEMCR_VC_CORERESET = 1 <<  0;
-    static uint32_t const DEMCR_VC_HARDERR   = 1 << 10;
-    static uint32_t const DEMCR_TRCENA       = 1 << 24;
-
-    static uint32_t const DHCSR_S_HALT = 1 << 17;
-}
-
-/*******************************************************************************
- * The BreakPoint Unit (ARMv6-M).  Compatible with ARMv7-M's more complex Flash
- * Patch and Breakpoint (FPB) unit.
- */
-namespace BPU
-{
-    static uint32_t const BP_CTRL = 0xE0002000;
-    static uint32_t const BP_CTRL_KEY    = 1 << 1;
-    static uint32_t const BP_CTRL_ENABLE = 1 << 0;
-    static uint32_t const BP_CTRL_NUM_CODE_pos = 4;
-    static uint32_t const BP_CTRL_NUM_CODE_mask = 0x7 << BP_CTRL_NUM_CODE_pos;
-
-    // Architeturally, there can be up to 8 breakpoints.  This is the first.
-    static uint32_t const BP_COMP0 = 0xE0002008;
-
-    static uint32_t const BP_COMPx_MATCH_NONE = 0 << 30;
-    static uint32_t const BP_COMPx_MATCH_LOW  = 1 << 30;
-    static uint32_t const BP_COMPx_MATCH_HIGH = 2 << 30;
-    static uint32_t const BP_COMPx_MATCH_BOTH = 3 << 30;
-
-    static uint32_t const BP_COMPx_COMP_mask = 0x1FFFFFFC;
-
-    static uint32_t const BP_COMPx_ENABLE = 1 << 0;
 }
 
 /*******************************************************************************
@@ -315,7 +252,7 @@ Error Target::reset_and_halt()
     // Write DEMCR back to request Vector Catch.
     Check(poke32(DCB::DEMCR, demcr | DCB::DEMCR_VC_CORERESET
                                    | DCB::DEMCR_VC_HARDERR
-                                   | DCB::DEMCR_TRCENA));
+                                   | DCB::DEMCR_DWTENA));
 
     // Request a processor-local reset.
     Check(poke32(SCB::AIRCR, SCB::AIRCR_VECTKEY | SCB::AIRCR_VECTRESET));
