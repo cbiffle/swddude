@@ -15,6 +15,14 @@ using namespace Log;
 namespace MEM_AP
 {
     static uint32_t const CSW = 0x00;
+    static uint32_t const CSW_RESERVED_mask = 0xFFFFF000;
+    static uint32_t const CSW_ADDRINC_OFF    = 0 << 4;
+    static uint32_t const CSW_ADDRINC_SINGLE = 1 << 4;
+    static uint32_t const CSW_ADDRINC_PACKED = 2 << 4;
+    static uint32_t const CSW_SIZE_1 = 0 << 0;
+    static uint32_t const CSW_SIZE_2 = 1 << 0;
+    static uint32_t const CSW_SIZE_4 = 2 << 0;
+
     static uint32_t const TAR = 0x04;
     static uint32_t const DRW = 0x0C;
 }
@@ -29,6 +37,8 @@ namespace SCB
     static uint32_t const AIRCR_VECTRESET = 1 << 0;
 
     static uint32_t const DFSR  = 0xE000ED30;
+    static uint32_t const DFSR_VCATCH = 1 << 3;
+    static uint32_t const DFSR_reason_mask = 0x1F;
 }
 
 /*******************************************************************************
@@ -37,9 +47,23 @@ namespace SCB
 namespace DCB
 {
     static uint32_t const DHCSR = 0xE000EDF0;
+    static uint32_t const DHCSR_update_mask = 0xFFFF;
+    static uint32_t const DHCSR_DBGKEY    = 0xA05F << 16;
+    static uint32_t const DHCSR_S_REGRDY  =      1 << 16;
+    static uint32_t const DHCSR_C_HALT    =      1 <<  1;
+    static uint32_t const DHCSR_C_DEBUGEN =      1 <<  0;
+
     static uint32_t const DCRSR = 0xE000EDF4;
+    static uint32_t const DCRSR_READ  = 0 << 16;
+    static uint32_t const DCRSR_WRITE = 1 << 16;
+
     static uint32_t const DCRDR = 0xE000EDF8;
+
     static uint32_t const DEMCR = 0xE000EDFC;
+    static uint32_t const DEMCR_VC_CORERESET = 1 <<  0;
+    static uint32_t const DEMCR_VC_HARDERR   = 1 << 10;
+    static uint32_t const DEMCR_TRCENA       = 1 << 24;
+
     static uint32_t const DHCSR_S_HALT = 1 << 17;
 }
 
@@ -50,7 +74,22 @@ namespace DCB
 namespace BPU
 {
   static uint32_t const BP_CTRL = 0xE0002000;
+  static uint32_t const BP_CTRL_KEY    = 1 << 1;
+  static uint32_t const BP_CTRL_ENABLE = 1 << 0;
+  static uint32_t const BP_CTRL_NUM_CODE_pos = 4;
+  static uint32_t const BP_CTRL_NUM_CODE_mask = 0x7 << BP_CTRL_NUM_CODE_pos;
+
+  // Architeturally, there can be up to 8 breakpoints.  This is the first.
   static uint32_t const BP_COMP0 = 0xE0002008;
+
+  static uint32_t const BP_COMPx_MATCH_NONE = 0 << 30;
+  static uint32_t const BP_COMPx_MATCH_LOW  = 1 << 30;
+  static uint32_t const BP_COMPx_MATCH_HIGH = 2 << 30;
+  static uint32_t const BP_COMPx_MATCH_BOTH = 3 << 30;
+
+  static uint32_t const BP_COMPx_COMP_mask = 0x1FFFFFFC;
+
+  static uint32_t const BP_COMPx_ENABLE = 1 << 0;
 }
 
 /*******************************************************************************
@@ -121,16 +160,16 @@ Error Target::initialize() {
   Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
   uint32_t csw;
   Check(final_read_ap(&csw));
-  csw = (csw & 0xFFFFF000) | 2;  // Modify value for 4-byte transactions.
+  csw = (csw & MEM_AP::CSW_RESERVED_mask) | MEM_AP::CSW_SIZE_4;
   Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
   // Enable debugging.
   uint32_t dhcsr;
   Check(peek32(DCB::DHCSR, &dhcsr));
   if ((dhcsr & (1 << 0)) == 0) {
-    Check(poke32(DCB::DHCSR, (dhcsr & 0xFFFF)
-                           | (0xA05F << 16)
-                           | (1 << 0)));
+    Check(poke32(DCB::DHCSR, (dhcsr & DCB::DHCSR_update_mask)
+                           | DCB::DHCSR_DBGKEY
+                           | DCB::DHCSR_C_DEBUGEN));
   }
 
   return success;
@@ -145,9 +184,9 @@ Error Target::read_words(uint32_t target_addr,
   Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
   uint32_t csw;
   Check(final_read_ap(&csw));
-  csw = (csw & 0xFFFFF000)  // Reserved fields must be preserved
-      | (1 << 4)  // Auto-increment.
-      | 2;  // 4-byte transactions.
+  csw = (csw & MEM_AP::CSW_RESERVED_mask)
+      | MEM_AP::CSW_ADDRINC_SINGLE
+      | MEM_AP::CSW_SIZE_4;
   Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
   // Load Transfer Address Register with first address.
@@ -171,9 +210,9 @@ Error Target::write_words(void const *host_buffer, uint32_t target_addr,
   Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
   uint32_t csw;
   Check(final_read_ap(&csw));
-  csw = (csw & 0xFFFFF000)  // Reserved fields must be preserved
-      | (1 << 4)  // Auto-increment.
-      | 2;  // 4-byte transactions.
+  csw = (csw & MEM_AP::CSW_RESERVED_mask)
+      | MEM_AP::CSW_ADDRINC_SINGLE
+      | MEM_AP::CSW_SIZE_4;
   Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
   
   // Load Transfer Address Register with first address.
@@ -187,24 +226,24 @@ Error Target::write_words(void const *host_buffer, uint32_t target_addr,
 }
 
 Error Target::read_register(RegisterNumber reg, uint32_t *out) {
-  Check(poke32(DCB::DCRSR, (0 << 16) | (reg & 0x1F)));
+  Check(poke32(DCB::DCRSR, DCB::DCRSR_READ | (reg & 0x1F)));
 
   uint32_t dhcsr;
   do {
     Check(peek32(DCB::DHCSR, &dhcsr));
-  } while ((dhcsr & (1 << 16)) == 0);
+  } while ((dhcsr & DCB::DHCSR_S_REGRDY) == 0);
 
   return peek32(DCB::DCRDR, out);
 }
 
 Error Target::write_register(RegisterNumber reg, uint32_t data) {
   Check(poke32(DCB::DCRDR, data));
-  Check(poke32(DCB::DCRSR, (1 << 16) | (reg & 0x1F)));
+  Check(poke32(DCB::DCRSR, DCB::DCRSR_WRITE | (reg & 0x1F)));
   
   uint32_t dhcsr;
   do {
     Check(peek32(DCB::DHCSR, &dhcsr));
-  } while ((dhcsr & (1 << 16)) == 0);
+  } while ((dhcsr & DCB::DHCSR_S_REGRDY) == 0);
 
   return success;
 }
@@ -215,15 +254,15 @@ Error Target::reset_and_halt() {
   Check(peek32(DCB::DEMCR, &demcr));
 
   // Write DEMCR back to request Vector Catch.
-  Check(poke32(DCB::DEMCR, demcr | (1 << 0)  // VC_CORERESET
-                                 | (1 << 10)  // VC_HARDERR
-                                 | (1 << 24)));  // TRCENA
+  Check(poke32(DCB::DEMCR, demcr | DCB::DEMCR_VC_CORERESET
+                                 | DCB::DEMCR_VC_HARDERR
+                                 | DCB::DEMCR_TRCENA));
 
   // Request a processor-local reset.
   Check(poke32(SCB::AIRCR, SCB::AIRCR_VECTKEY | SCB::AIRCR_VECTRESET));
 
   // Wait for the processor to halt.
-  CheckRetry(poll_for_halt(1 << 3), 1000);
+  CheckRetry(poll_for_halt(SCB::DFSR_VCATCH), 1000);
 
   // Restore DEMCR.
   Check(poke32(DCB::DEMCR, demcr));
@@ -232,7 +271,9 @@ Error Target::reset_and_halt() {
 }
 
 Error Target::halt() {
-  return poke32(DCB::DHCSR, (0xA05F << 16) | (1 << 1) | (1 << 0));
+  return poke32(DCB::DHCSR, DCB::DHCSR_DBGKEY
+                          | DCB::DHCSR_C_HALT
+                          | DCB::DHCSR_C_DEBUGEN);
 }
 
 Error Target::poll_for_halt(uint32_t const dfsr_mask) {
@@ -248,7 +289,9 @@ Error Target::poll_for_halt(uint32_t const dfsr_mask) {
 }
 
 Error Target::resume() {
-  return poke32(DCB::DHCSR, (0xA05F << 16) | (0 << 1) | (1 << 0));
+  return poke32(DCB::DHCSR, DCB::DHCSR_DBGKEY
+                          | 0  // Do not set C_HALT
+                          | DCB::DHCSR_C_DEBUGEN);
 }
 
 bool Target::is_register_implemented(int n) {
@@ -256,24 +299,24 @@ bool Target::is_register_implemented(int n) {
 }
 
 Error Target::enable_breakpoints() {
-  return poke32(BPU::BP_CTRL, (1 << 1) | (1 << 0));
+  return poke32(BPU::BP_CTRL, BPU::BP_CTRL_KEY | BPU::BP_CTRL_ENABLE);
 }
 
 Error Target::disable_breakpoints() {
-  return poke32(BPU::BP_CTRL, (1 << 1) | (0 << 0));
+  return poke32(BPU::BP_CTRL, BPU::BP_CTRL_KEY);
 }
 
 Error Target::are_breakpoints_enabled(bool *result) {
   uint32_t ctrl;
   Check(peek32(BPU::BP_CTRL, &ctrl));
-  *result = ctrl & (1 << 0);
+  *result = ctrl & BPU::BP_CTRL_KEY;
   return success;
 }
 
 Error Target::get_breakpoint_count(size_t *n) {
   uint32_t ctrl;
   Check(peek32(BPU::BP_CTRL, &ctrl));
-  *n = (ctrl >> 4) & 0xF;
+  *n = (ctrl & BPU::BP_CTRL_NUM_CODE_mask) >> BPU::BP_CTRL_NUM_CODE_pos;
   return success;
 }
 
@@ -284,10 +327,11 @@ Error Target::enable_breakpoint(size_t n, uint32_t addr) {
   if (addr & 0xE0000000) return argument_error;
 
   // Break on upper or lower halfword, depending on bit 1 of address.
-  uint8_t match_type = (addr & 2) ? 2 : 1;
-
-  return poke32(BPU::BP_COMP0 + (n * sizeof(uint32_t)),
-                (match_type << 30) | (addr & 0x1FFFFFFC) | 1);
+  uint32_t reg = BPU::BP_COMP0 + (n * sizeof(uint32_t));
+  return poke32(reg, ((addr & 2) ? BPU::BP_COMPx_MATCH_HIGH
+                                 : BPU::BP_COMPx_MATCH_LOW)
+                   | (addr & BPU::BP_COMPx_COMP_mask)
+                   | BPU::BP_COMPx_ENABLE);
 }
 
 Error Target::disable_breakpoint(size_t n) {
@@ -297,19 +341,19 @@ Error Target::disable_breakpoint(size_t n) {
 Error Target::is_halted(bool *flag) {
   uint32_t dhcsr;
   Check(peek32(DCB::DHCSR, &dhcsr));
-  *flag = dhcsr & (1 << 17);
+  *flag = dhcsr & DCB::DHCSR_S_HALT;
   return success;
 }
 
 Error Target::read_halt_state(uint32_t *out) {
   uint32_t dfsr;
   Check(peek32(SCB::DFSR, &dfsr));
-  *out = dfsr & 0x1F;
+  *out = dfsr & SCB::DFSR_reason_mask;
   return success;
 }
 
 Error Target::reset_halt_state() {
-  return poke32(SCB::DFSR, 0x1F);
+  return poke32(SCB::DFSR, SCB::DFSR_reason_mask);
 }
 
 Error Target::read_word(uint32_t addr, uint32_t *data) {
