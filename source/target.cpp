@@ -17,6 +17,8 @@ namespace MEM_AP
     static uint32_t const CSW = 0x00;
     static uint32_t const CSW_RESERVED_mask = 0xFFFFF000;
 
+    static uint32_t const CSW_TRINPROG = 1 << 7;
+
     static uint32_t const CSW_ADDRINC_OFF    = 0 << 4;
     static uint32_t const CSW_ADDRINC_SINGLE = 1 << 4;
     static uint32_t const CSW_ADDRINC_PACKED = 2 << 4;
@@ -152,8 +154,8 @@ Error Target::poke32(uint32_t address, uint32_t data)
   CheckRetry(write_ap(MEM_AP::DRW, data), 100);
 
   // Block waiting for write to complete.
-  uint32_t csw = (1 << 7);
-  while (csw & (1 << 7))
+  uint32_t csw = MEM_AP::CSW_TRINPROG;
+  while (csw & MEM_AP::CSW_TRINPROG)
   {
     CheckRetry(start_read_ap(MEM_AP::CSW), 100);
     Check(final_read_ap(&csw));
