@@ -38,34 +38,19 @@ namespace MEM_AP
  * Target private methods
  */
 
-Error Target::select_bank_for_address(uint8_t address)
-{
-    uint8_t bank = address & 0xF0;
-
-    if (_current_ap_bank != bank) {
-        Check(_dap.select_ap_bank(_mem_ap_index, bank));
-        _current_ap_bank = bank;
-    }
-
-    return Err::success;
-}
-
 Error Target::write_ap(uint8_t address, word_t data)
 {
-    Check(select_bank_for_address(address));
-    return _dap.write_ap_in_bank(address, data);
+    return _dap.write_ap(_mem_ap_index, address, data);
 }
 
 Error Target::start_read_ap(uint8_t address)
 {
-    Check(select_bank_for_address(address));
-    return _dap.start_read_ap_in_bank(address);
+    return _dap.start_read_ap(_mem_ap_index, address);
 }
 
 Error Target::step_read_ap(uint8_t next_address, word_t * last_data)
 {
-    Check(select_bank_for_address(next_address));
-    return _dap.step_read_ap_in_bank(next_address, last_data);
+    return _dap.step_read_ap(_mem_ap_index, next_address, last_data);
 }
 
 Error Target::final_read_ap(word_t * data)
@@ -109,8 +94,7 @@ Error Target::poke32(rptr<word_t> address, word_t data)
 Target::Target(SWDDriver & swd, DebugAccessPort & dap, uint8_t mem_ap_index) :
     _swd(swd),
     _dap(dap),
-    _mem_ap_index(mem_ap_index),
-    _current_ap_bank(-1) {}
+    _mem_ap_index(mem_ap_index) {}
 
 Error Target::initialize()
 {

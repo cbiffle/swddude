@@ -27,19 +27,13 @@ class Target
     DebugAccessPort &_dap;  // DAP to wrap.
     uint8_t _mem_ap_index;  // Index of the sole AP used (a MEM-AP); often 0.
 
-    // Updated as we change banks to avoid duplicate SELECT writes.
-    int32_t _current_ap_bank;
-
-    // Writes SELECT if necessary to make the address visible.
-    Err::Error select_bank_for_address(uint8_t address);
-
-    // Writes data to a register in AP #0, changing banks if required.
+    // Writes data to a register in AP #0.
     Err::Error write_ap(uint8_t address, ARM::word_t data);
 
     /*
      * start_read_ap, step_read_ap, and final_read_ap map to the similarly-named
-     * functions in DebugAccessPort -- but they keep track of the current SELECT
-     * value and transparently change banks if required.
+     * functions in DebugAccessPort -- but they implicitly pass the ID of our
+     * single AP, to save typing.
      */
     Err::Error start_read_ap(uint8_t address);
     Err::Error step_read_ap(uint8_t next_address, ARM::word_t * last_data);
