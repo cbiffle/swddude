@@ -250,7 +250,7 @@ Error Target::reset_and_halt()
                                    | DCB::DEMCR_DWTENA));
 
     // Request a processor-local reset.
-    Check(poke32(SCB::AIRCR, SCB::AIRCR_VECTKEY | SCB::AIRCR_VECTRESET));
+    Check(poke32(SCB::AIRCR, SCB::AIRCR_VECTKEY | SCB::AIRCR_SYSRESETREQ));
 
     // Wait for the processor to halt.
     CheckRetry(poll_for_halt(SCB::DFSR_VCATCH), 1000);

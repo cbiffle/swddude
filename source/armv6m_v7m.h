@@ -25,7 +25,8 @@ namespace SCB
 {
     static rptr<ARM::word_t> const AIRCR(0xE000ED0C);
     static ARM::word_t const AIRCR_VECTKEY = 0x05FA << 16;
-    static ARM::word_t const AIRCR_VECTRESET = 1 << 0;
+    static ARM::word_t const AIRCR_SYSRESETREQ = 1 << 2;
+    static ARM::word_t const AIRCR_VECTRESET   = 1 << 0;  // ARMv7-M only!
 
     static rptr<ARM::word_t> const DFSR(0xE000ED30);
     static ARM::word_t const DFSR_EXTERNAL = 1 << 4;
