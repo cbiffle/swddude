@@ -46,6 +46,7 @@
 
 #include <unistd.h>
 #include <stdio.h>
+#include <libusb.h>
 #include <ftdi.h>
 #include <inttypes.h>
 
@@ -66,19 +67,41 @@ using std::ios;
 
 namespace CommandLine
 {
-    static Scalar<int>          debug ("debug",  true,  0,
-				       "What level of debug logging to use.");
+    static Scalar<int>
+    debug ("debug",  true,  0,
+           "What level of debug logging to use.");
 
-    static Scalar<String> flash("flash", true, "", "Binary program to load");
+    static Scalar<String>
+    flash("flash", true, "",
+          "Binary program to load");
 
-    static Scalar<bool> fix_lpc_checksum("fix_lpc_checksum", true, false,
-        "When true, the loader will write the LPC-style checksum.");
+    static Scalar<bool>
+    fix_lpc_checksum("fix_lpc_checksum", true, false,
+                     "When true, the loader will write the LPC-style "
+                     "checksum.");
 
-    static Argument     *arguments[] = {
-      &debug,
-      &flash,
-      &fix_lpc_checksum,
-      null };
+    static Scalar<int>
+    vid("vid", true, 0x0403,
+        "FT2232 VID");
+
+    static Scalar<int>
+    pid("pid", true, 0x6014,
+        "FT2232 PID");
+
+    static Scalar<int>
+    interface("interface", true, 0,
+              "FT2232 interface");
+
+    static Argument     *arguments[] =
+    {
+        &debug,
+        &flash,
+        &fix_lpc_checksum,
+        &vid,
+        &pid,
+        &interface,
+        null
+    };
 }
 
 
@@ -443,48 +466,96 @@ comms_failure:
  * Entry point (sort of -- see main below)
  */
 
-static uint16_t const ft232h_vid = 0x0403;
-static uint16_t const ft232h_pid = 0x6014;
-
 static Error error_main(int argc, char const ** argv)
 {
-    Error check_error = Err::success;
+    Error                       check_error = Err::success;
+    libusb_context *            libusb;
+    libusb_device_handle *      handle;
+    libusb_device *             device;
+    ftdi_context                ftdi;
+    ftdi_interface              interface;
 
-    ftdi_context ftdi;
-    CheckCleanupP(ftdi_init(&ftdi), init_failed);
+    CheckCleanupP(libusb_init(&libusb), libusb_init_failed);
+    CheckCleanupP(ftdi_init(&ftdi), ftdi_init_failed);
 
-    CheckCleanupStringP(ftdi_usb_open(&ftdi, ft232h_vid, ft232h_pid),
+    /*
+     * Locate FTDI chip using it's VID:PID pair.  This doesn't uniquely identify
+     * the programmer so this will need to be improved.
+     */
+    handle = libusb_open_device_with_vid_pid(libusb,
+                                             CommandLine::vid.get(),
+                                             CommandLine::pid.get());
+
+    CheckCleanupStringB(handle, libusb_open_failed,
+                        "No device found with VID:PID = 0x%04x:0x%04x\n",
+                        CommandLine::vid.get(),
+                        CommandLine::pid.get());
+
+    /*
+     * Request that any attached kernel driver be detached.  libftdi will also
+     * do this, but making it explicit here allows us more control over when
+     * we reattach the kernel driver.
+     */
+    CheckCleanupP(libusb_detach_kernel_driver(handle, 1), detach_failed);
+    CheckCleanupB(device = libusb_get_device(handle), get_failed);
+
+    /*
+     * The interface must be selected before the ftdi device can be opened.
+     */
+    interface = ftdi_interface(INTERFACE_A + CommandLine::interface.get());
+
+    CheckCleanupStringP(ftdi_set_interface(&ftdi, interface),
+                        interface_failed,
+                        "Unable to set FTDI device interface: %s",
+                        ftdi_get_error_string(&ftdi));
+
+    CheckCleanupStringP(ftdi_usb_open_dev(&ftdi, device),
                         open_failed,
                         "Unable to open FTDI device: %s",
                         ftdi_get_error_string(&ftdi));
 
-    CheckCleanupP(ftdi_usb_reset(&ftdi), reset_failed);
-    CheckCleanupP(ftdi_set_interface(&ftdi, INTERFACE_A), interface_failed);
+    CheckCleanupStringP(ftdi_usb_reset(&ftdi),
+                        reset_failed,
+                        "FTDI device reset failed: %s",
+                        ftdi_get_error_string(&ftdi));
 
-    unsigned chipid;
-    CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
+    {
+        unsigned        chipid;
 
-    debug(3, "FTDI chipid: %X", chipid);
+        CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
+
+        debug(3, "FTDI chipid: %X", chipid);
+    }
 
     {
         MPSSESWDDriver swd(&ftdi);
         CheckCleanup(run_experiment(swd), experiment_failed);
     }
 
-experiment_failed:
+  experiment_failed:
     CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
 
-read_failed:
-interface_failed:
-reset_failed:
+  read_failed:
+  reset_failed:
     CheckStringP(ftdi_usb_close(&ftdi),
                  "Unable to close FTDI device: %s",
                  ftdi_get_error_string(&ftdi));
 
-open_failed:
+  open_failed:
+  interface_failed:
+  get_failed:
+    libusb_attach_kernel_driver(handle, 1);
+
+  detach_failed:
+    libusb_close(handle);
+
+  libusb_open_failed:
     ftdi_deinit(&ftdi);
 
-init_failed:
+  ftdi_init_failed:
+    libusb_exit(libusb);
+
+  libusb_init_failed:
     return check_error;
 }
 
