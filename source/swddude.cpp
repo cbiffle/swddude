@@ -30,6 +30,7 @@
 #include "swd_mpsse.h"
 #include "swd.h"
 #include "arm.h"
+
 #include "lpc11xx_13xx.h"
 
 #include "libs/error/error_stack.h"
@@ -39,6 +40,7 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
+#include <algorithm>
 
 #define __STDC_FORMAT_MACROS
 
@@ -47,7 +49,9 @@
 #include <ftdi.h>
 #include <inttypes.h>
 
-using namespace Err;
+using Err::Error;
+using Err::error_stack_print;
+
 using namespace Log;
 using namespace ARM;
 using namespace LPC11xx_13xx;
@@ -85,42 +89,52 @@ namespace CommandLine
 /*
  * Invokes a routine within In-Application Programming ROM of an LPC part.
  */
-static Error invoke_iap(Target &target, uint32_t param_table,
-                                        uint32_t result_table,
-                                        uint32_t stack) {
-  debug(2, "invoke_iap: param_table=%08X, result_table=%08X, stack=%08X",
-      param_table, result_table, stack);
+static Error invoke_iap(Target & target,
+                        rptr<word_t> param_table,
+                        rptr<word_t> result_table,
+                        rptr<word_t> stack)
+{
+    debug(2, "invoke_iap: param_table=%08X, result_table=%08X, stack=%08X",
+          param_table.bits(),
+          result_table.bits(),
+          stack.bits());
 
-  Check(target.write_register(Register::R0, param_table));
-  Check(target.write_register(Register::R1, result_table));
-  Check(target.write_register(Register::SP, stack));
-  Check(target.write_register(Register::PC, IAP::entry));
+    Check(target.write_register(Register::R0, param_table));
+    Check(target.write_register(Register::R1, result_table));
+    Check(target.write_register(Register::SP, stack));
+    Check(target.write_register(Register::PC, IAP::entry));
 
-  // Tell the CPU to return into RAM, and catch it there with a breakpoint.
-  Check(target.write_register(Register::LR, param_table | 1));
-  Check(target.enable_breakpoint(0, param_table));
+    // Tell the CPU to return into RAM, and catch it there with a breakpoint.
+    rptr_const<thumb_code_t> trap(param_table.bits() | 1);
+    Check(target.write_register(Register::LR, trap));
+    Check(target.enable_breakpoint(0, trap));
 
-  Check(target.reset_halt_state());
+    Check(target.reset_halt_state());
 
-  Check(target.resume());
+    Check(target.resume());
 
-  bool halted = false;
-  uint32_t attempts = 0;
-  do {
-    Check(target.is_halted(&halted));
-    usleep(10000);
-  } while (++attempts < 100 && !halted);
+    bool halted = false;
+    uint32_t attempts = 0;
+    do
+    {
+        Check(target.is_halted(&halted));
+        usleep(10000);
+    }
+    while (++attempts < 100 && !halted);
 
-  if (!halted) {
-    warning("Target did not halt after IAP execution!");
-    Check(target.halt());
-    uint32_t pc;
-    Check(target.read_register(Register::PC, &pc));
-    warning("Target forceably halted at %08X", pc);
-    return failure;
-  }
+    if (!halted)
+    {
+        warning("Target did not halt after IAP execution!");
+        Check(target.halt());
 
-  return success;
+        uint32_t pc;
+        Check(target.read_register(Register::PC, &pc));
+        warning("Target forceably halted at %08X", pc);
+
+        return Err::failure;
+    }
+
+    return Err::success;
 }
 
 /*
@@ -133,152 +147,176 @@ static Error invoke_iap(Target &target, uint32_t param_table,
  *
  * The current implementation won't work on the LPC17xx.
  */
-static Error unmap_boot_sector(Target &target) {
-  return target.write_word(SYSCON::SYSMEMREMAP,
-                           SYSCON::SYSMEMREMAP_MAP_USER_FLASH);
+static Error unmap_boot_sector(Target & target)
+{
+    return target.write_word(SYSCON::SYSMEMREMAP,
+                             SYSCON::SYSMEMREMAP_MAP_USER_FLASH);
 }
 
-static Error unprotect_flash(Target &target, uint32_t work_addr,
-                                             uint32_t first_sector,
-                                             uint32_t last_sector) {
-  debug(1, "Unprotecting Flash sectors %"PRIu32"-%"PRIu32"...",
-      first_sector, last_sector);
+static Error unprotect_flash(Target & target,
+                             rptr<word_t> work_addr,
+                             uint32_t first_sector,
+                             uint32_t last_sector)
+{
+    debug(1, "Unprotecting Flash sectors %"PRIu32"-%"PRIu32"...",
+          first_sector,
+          last_sector);
 
-  uint32_t const cmd_addr = work_addr;
-  uint32_t const resp_addr = cmd_addr;  // Reuse same space.
-  uint32_t const stack_top = cmd_addr
-                           + IAP::max_command_response_words * sizeof(word_t)
-                           + IAP::min_stack_bytes;
+    rptr<word_t> const cmd_addr (work_addr);
+    rptr<word_t> const resp_addr(cmd_addr);  // Reuse same space.
+    rptr<word_t> const stack_top(cmd_addr + IAP::max_command_response_words
+                                          + IAP::min_stack_words);
 
-  // Build command table
-  Check(target.write_word(cmd_addr + 0, IAP::Command::unprotect_sectors));
-  Check(target.write_word(cmd_addr + 4, first_sector));
-  Check(target.write_word(cmd_addr + 8, last_sector));
+    // Build command table
+    Check(target.write_word(cmd_addr + 0, IAP::Command::unprotect_sectors));
+    Check(target.write_word(cmd_addr + 1, first_sector));
+    Check(target.write_word(cmd_addr + 2, last_sector));
 
-  Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
+    Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
 
-  uint32_t iap_result;
-  Check(target.read_word(resp_addr + 0, &iap_result));
-  CheckEQ(iap_result, 0);
-  return success;
+    uint32_t iap_result;
+    Check(target.read_word(resp_addr + 0, &iap_result));
+    CheckEQ(iap_result, 0);
+
+    return Err::success;
 }
 
-static Error erase_flash(Target &target, uint32_t work_addr,
-                                         uint32_t first_sector,
-                                         uint32_t last_sector) {
-  debug(1, "Erasing Flash sectors %"PRIu32"-%"PRIu32"...",
-      first_sector, last_sector);
+static Error erase_flash(Target & target,
+                         rptr<word_t> work_addr,
+                         uint32_t first_sector,
+                         uint32_t last_sector)
+{
+    debug(1, "Erasing Flash sectors %"PRIu32"-%"PRIu32"...",
+          first_sector,
+          last_sector);
 
-  uint32_t const cmd_addr = work_addr;
-  uint32_t const resp_addr = cmd_addr;  // Reuse same space.
-  uint32_t const stack_top = cmd_addr
-                           + IAP::max_command_response_words * sizeof(word_t)
-                           + IAP::min_stack_bytes;
+    rptr<word_t> const cmd_addr (work_addr);
+    rptr<word_t> const resp_addr(cmd_addr);  // Reuse same space.
+    rptr<word_t> const stack_top(cmd_addr + IAP::max_command_response_words
+                                          + IAP::min_stack_words);
 
-  Check(target.write_word(cmd_addr +  0, IAP::Command::erase_sectors));
-  Check(target.write_word(cmd_addr +  4, first_sector));
-  Check(target.write_word(cmd_addr +  8, last_sector));
-  Check(target.write_word(cmd_addr + 12, 12000));  // TODO hard-coded clock
+    Check(target.write_word(cmd_addr + 0, IAP::Command::erase_sectors));
+    Check(target.write_word(cmd_addr + 1, first_sector));
+    Check(target.write_word(cmd_addr + 2, last_sector));
+    Check(target.write_word(cmd_addr + 3, 12000));  // TODO hard-coded clock
 
-  Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
+    Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
 
-  uint32_t iap_result;
-  Check(target.read_word(resp_addr + 0, &iap_result));
-  CheckEQ(iap_result, 0);
-  return success;
+    uint32_t iap_result;
+    Check(target.read_word(resp_addr + 0, &iap_result));
+    CheckEQ(iap_result, 0);
+
+    return Err::success;
 }
 
-static Error copy_ram_to_flash(Target &target, uint32_t work_addr,
-                                               uint32_t src_addr,
-                                               uint32_t dest_addr,
-                                               size_t num_bytes) {
-  uint32_t const cmd_addr = work_addr;
-  uint32_t const resp_addr = cmd_addr;  // Reuse same space.
-  uint32_t const stack_top = cmd_addr
-                           + IAP::max_command_response_words * sizeof(word_t)
-                           + IAP::min_stack_bytes;
+static Error copy_ram_to_flash(Target & target,
+                               rptr<word_t> work_addr,
+                               rptr<word_t> src_addr,
+                               rptr<word_t> dest_addr,
+                               size_t num_bytes)
+{
+    rptr<word_t> const cmd_addr (work_addr);
+    rptr<word_t> const resp_addr(cmd_addr);  // Reuse same space.
+    rptr<word_t> const stack_top(cmd_addr + IAP::max_command_response_words
+                                          + IAP::min_stack_words);
 
-  debug(1, "Writing Flash: %zu bytes at %"PRIx32, num_bytes, dest_addr);
+    debug(1, "Writing Flash: %zu bytes at %"PRIx32,
+          num_bytes,
+          dest_addr.bits());
 
-  Check(target.write_word(cmd_addr +  0, IAP::Command::copy_ram_to_flash));
-  Check(target.write_word(cmd_addr +  4, dest_addr));
-  Check(target.write_word(cmd_addr +  8, src_addr));
-  Check(target.write_word(cmd_addr + 12, num_bytes));
-  Check(target.write_word(cmd_addr + 16, 12000));  // TODO hard-coded clock
+    Check(target.write_word(cmd_addr + 0, IAP::Command::copy_ram_to_flash));
+    Check(target.write_word(cmd_addr + 1, dest_addr.bits()));
+    Check(target.write_word(cmd_addr + 2, src_addr.bits()));
+    Check(target.write_word(cmd_addr + 3, num_bytes));
+    Check(target.write_word(cmd_addr + 4, 12000));  // TODO hard-coded clock
 
-  Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
+    Check(invoke_iap(target, cmd_addr, resp_addr, stack_top));
 
-  uint32_t iap_result;
-  Check(target.read_word(resp_addr + 0, &iap_result));
-  CheckEQ(iap_result, 0);
-  return success;
+    uint32_t iap_result;
+    Check(target.read_word(resp_addr + 0, &iap_result));
+    CheckEQ(iap_result, 0);
+
+    return Err::success;
 }
 
 
 /*
  * Rewrites the target's flash memory.
  */
-static Error program_flash(Target &target, void const *program,
-                                           size_t word_count) {
-  uint32_t const bytes_per_block = 256;
-  uint32_t const ram_buffer = 0x10000000;
-  uint32_t const work_area = ram_buffer + bytes_per_block;
+static Error program_flash(Target & target,
+                           word_t const * program,
+                           size_t word_count)
+{
+    size_t const bytes_per_block = 256;
+    size_t const words_per_block = bytes_per_block / sizeof(word_t);
 
-  // The LPC11xx and LPC13xx parts use a uniform 4KiB protection/erase sector.
-  size_t const bytes_per_sector = 4096;
-  size_t const last_sector =
-      (word_count * sizeof(uint32_t)) / bytes_per_sector;  // Inclusive.
+    size_t const bytes_per_sector = 4096;
+    size_t const words_per_sector = bytes_per_sector / sizeof(word_t);
 
-  // Ensure that the boot Flash isn't visible (will mess us up).
-  Check(unmap_boot_sector(target));
+    rptr<word_t> const ram_buffer(0x10000000);
+    rptr<word_t> const work_area(ram_buffer + words_per_block);
 
-  Check(unprotect_flash(target, work_area, 0, last_sector));
-  Check(erase_flash(target, work_area, 0, last_sector));
+    size_t const last_sector = word_count / words_per_sector;
+    size_t const block_count =
+        (word_count + words_per_block - 1) / words_per_block;
 
-  // Copy program to RAM, then to Flash, in 256 byte chunks.
-  uint32_t const words_per_block = bytes_per_block / sizeof(uint32_t);
-  uint32_t const block_count =
-      (word_count + words_per_block - 1) / words_per_block;
-  uint32_t const *program_words = (uint32_t const *) program;
+    // Ensure that the boot Flash isn't visible (will mess us up).
+    Check(unmap_boot_sector(target));
 
-  for (uint32_t block = 0; block < block_count; ++block) {
-    uint32_t const block_offset = block * words_per_block;
+    // Erase the current contents of Flash.  (TODO: make optional?)
+    Check(unprotect_flash(target, work_area, 0, last_sector));
+    Check(erase_flash(target, work_area, 0, last_sector));
 
-    uint32_t block_size = word_count - block_offset;
-    if (block_size > words_per_block) block_size = words_per_block;
+    // Copy program to RAM, then to Flash, in 256 byte chunks.
+    for (unsigned block = 0; block < block_count; ++block)
+    {
+        size_t block_offset = block * words_per_block;
+        rptr<word_t> block_address(block_offset * sizeof(word_t));
 
-    debug(1, "Copying %"PRIu32" words starting with #%"PRIu32" to %08X",
-        block_size, block, ram_buffer);
-    Check(target.write_words(&program_words[block_offset],
-                             ram_buffer,
-                             block_size));
+        size_t current_block_words =
+            std::max(word_count - block_offset, words_per_block);
 
-    unsigned sector = block_offset * sizeof(uint32_t) / bytes_per_sector;
-    Check(unprotect_flash(target, work_area, sector, sector));
+        // Copy a block to RAM...
+        debug(1, "Copying %zu words starting with #%u to %08X",
+              current_block_words,
+              block,
+              ram_buffer.bits());
 
-    // Copy block to Flash
-    Check(copy_ram_to_flash(target, work_area,
-                                    ram_buffer,
-                                    block_offset * sizeof(uint32_t),
-                                    bytes_per_block));
-  }
+        Check(target.write_words(&program[block_offset],
+                                 ram_buffer,
+                                 current_block_words));
 
-  return success;
+        // ...and write it to Flash.
+        unsigned sector = block_address.bits() / bytes_per_sector;
+        Check(unprotect_flash(target, work_area, sector, sector));
+
+        Check(copy_ram_to_flash(target,
+                                work_area,
+                                ram_buffer,
+                                block_address,
+                                bytes_per_block));
+    }
+
+    return Err::success;
 }
 
 /*
  * Dumps the first 256 bytes of the target's flash to the console.
  */
-static Error dump_flash(Target &target) {
-  uint32_t buffer[256 / sizeof(uint32_t)];
-  Check(target.read_words(0, buffer, sizeof(buffer) / sizeof(buffer[0])));
+static Error dump_flash(Target & target)
+{
+    word_t buffer[256 / sizeof(word_t)];
+    size_t buffer_size = sizeof(buffer) / sizeof(buffer[0]);
 
-  notice("Contents of Flash:");
-  for (unsigned i = 0; i < (256 / sizeof(uint32_t)); ++i) {
-    notice(" [%08X] %08X", i * 4, buffer[i]);
-  }
+    Check(target.read_words(rptr<word_t>(0), buffer, buffer_size));
 
-  return success;
+    notice("Contents of Flash:");
+    for (unsigned i = 0; i < buffer_size; ++i)
+    {
+        notice(" [%08zX] %08"PRIX32, i * sizeof(word_t), buffer[i]);
+    }
+
+    return Err::success;
 }
 
 
@@ -286,106 +324,118 @@ static Error dump_flash(Target &target) {
  * swddude main implementation
  */
 
-static void fix_lpc_checksum(uint8_t program[], size_t program_length) {
-  const size_t kCheckedVectors = 7;
+static void fix_lpc_checksum(char * program, size_t program_length)
+{
+    size_t const checked_vectors = 7;
 
-  if (program_length < kCheckedVectors * sizeof(uint32_t)) {
-    warning("Program too short to write LPC checksum.");
-    return;
-  }
+    if (program_length < checked_vectors * sizeof(word_t)) {
+        warning("Program too short to write LPC checksum.");
+        return;
+    }
 
-  uint32_t *program_words = (uint32_t *) program;
+    word_t * program_words = (word_t *) program;
 
-  uint32_t sum = 0;
-  for (size_t i = 0; i < kCheckedVectors; ++i) {
-    sum += program_words[i];
-  }
-  sum = 0 - sum;
+    word_t sum = 0;
+    for (size_t i = 0; i < checked_vectors; ++i)
+    {
+        sum += program_words[i];
+    }
+    sum = 0 - sum;
 
-  debug(1, "Repairing LPC checksum: %08X", sum);
+    debug(1, "Repairing LPC checksum: %"PRIX32, sum);
 
-  program_words[kCheckedVectors] = sum;
+    program_words[checked_vectors] = sum;
 }
 
-static Error flash_from_file(Target &target, char const *path) {
-  Error check_error = success;
-  uint8_t *program = 0;
-  ifstream input;
+static Error flash_from_file(Target & target, char const * path)
+{
+    Error check_error = Err::success;
+    char * program = 0;
+    ifstream input;
 
-  input.open(path);
+    input.open(path);
 
-  // Do the "get length of file" dance.
-  input.seekg(0, ios::end);
-  size_t input_length = input.tellg();
-  input.seekg(0, ios::beg);
+    // Do the "get length of file" dance.
+    input.seekg(0, ios::end);
+    size_t input_length = input.tellg();
+    input.seekg(0, ios::beg);
 
-  CheckCleanupEQ(input_length, (input_length / 4) * 4, wrong_size);
+    CheckCleanupEQ(input_length,
+                   (input_length / sizeof(word_t)) * sizeof(word_t),
+                   wrong_size);
 
-  program = new uint8_t[input_length];
+    program = new char[input_length];
 
-  input.read((char *) program, input_length);
+    input.read(program, input_length);
 
-  debug(1, "Read program of %zu bytes", input_length);
+    debug(1, "Read program of %zu bytes", input_length);
 
-  if (CommandLine::fix_lpc_checksum.get()) {
-    fix_lpc_checksum(program, input_length);
-  }
+    if (CommandLine::fix_lpc_checksum.get())
+    {
+        fix_lpc_checksum(program, input_length);
+    }
 
-  CheckCleanup(program_flash(target, program, input_length / sizeof(uint32_t)),
-               comms_failure);
-  CheckCleanup(dump_flash(target), comms_failure);
+    CheckCleanup(program_flash(target,
+                               (word_t *) program,
+                               input_length / sizeof(word_t)),
+                 comms_failure);
+
+    CheckCleanup(dump_flash(target), comms_failure);
 
 comms_failure:
 wrong_size:
-  input.close();
-  if (program) delete[] program;
-  return check_error;
+    input.close();
+    if (program) delete[] program;
+    return check_error;
 }
 
-static Error run_experiment(SWDDriver &swd) {
-  Error check_error = success;
+static Error run_experiment(SWDDriver & swd)
+{
+    Error check_error = Err::success;
 
-  DebugAccessPort dap(swd);
-  Target target(swd, dap, 0);
+    DebugAccessPort dap(swd);
+    Target target(swd, dap, 0);
 
-  Check(swd.initialize());
+    Check(swd.initialize());
 
-  // Set up the initial DAP configuration while the target is in reset.
-  // The STM32 wants us to do this, and the others don't seem to mind.
-  Check(swd.enter_reset());
-  usleep(10000);
-  Check(dap.reset_state());
-  Check(target.initialize());
-  Check(target.reset_halt_state());
-  Check(swd.leave_reset());
-  usleep(100000);
+    // Set up the initial DAP configuration while the target is in reset.
+    // The STM32 wants us to do this, and the others don't seem to mind.
+    Check(swd.enter_reset());
+    usleep(10000);
+    Check(dap.reset_state());
+    Check(target.initialize());
+    Check(target.reset_halt_state());
+    Check(swd.leave_reset());
+    usleep(100000);
 
-  Check(target.halt());
-  Check(target.reset_and_halt());
+    Check(target.halt());
+    Check(target.reset_and_halt());
 
-  // Scope out the breakpoint unit.
-  Check(target.enable_breakpoints());
-  size_t breakpoint_count;
-  Check(target.get_breakpoint_count(&breakpoint_count));
-  notice("Target supports %zu hardware breakpoints.", breakpoint_count);
+    // Scope out the breakpoint unit.
+    Check(target.enable_breakpoints());
+    size_t breakpoint_count;
+    Check(target.get_breakpoint_count(&breakpoint_count));
+    notice("Target supports %zu hardware breakpoints.", breakpoint_count);
 
-  if (breakpoint_count == 0) {
-    warning("Can't continue!");
-    return success;
-  }
+    if (breakpoint_count == 0)
+    {
+        warning("Can't continue!");
+        return Err::success;  // Prevent stack trace
+    }
 
-  // Flash if requested.
-  if (CommandLine::flash.set()) {
-    CheckCleanup(flash_from_file(target, CommandLine::flash.get()),
-                 comms_failure);
-  }
+    // Flash if requested.
+    if (CommandLine::flash.set())
+    {
+        CheckCleanup(flash_from_file(target, CommandLine::flash.get()),
+                     comms_failure);
+    }
 
 comms_failure:
-  Check(swd.enter_reset());
-  usleep(100000);
-  Check(swd.leave_reset());
+    Check(swd.enter_reset());
+    usleep(100000);
+    Check(swd.leave_reset());
 
-  return check_error;
+    return check_error;
 }
 
 
@@ -393,66 +443,68 @@ comms_failure:
  * Entry point (sort of -- see main below)
  */
 
-static uint16_t kFt232hVid = 0x0403;
-static uint16_t kFt232hPid = 0x6014;
+static uint16_t const ft232h_vid = 0x0403;
+static uint16_t const ft232h_pid = 0x6014;
 
-static Error error_main(int argc, char const *argv[]) {
-  Error check_error = success;
+static Error error_main(int argc, char const ** argv)
+{
+    Error check_error = Err::success;
 
-  ftdi_context ftdi;
-  CheckCleanupP(ftdi_init(&ftdi), init_failed);
+    ftdi_context ftdi;
+    CheckCleanupP(ftdi_init(&ftdi), init_failed);
 
-  CheckCleanupStringP(ftdi_usb_open(&ftdi, kFt232hVid, kFt232hPid),
-                      open_failed,
-                      "Unable to open FTDI device: %s",
-                      ftdi_get_error_string(&ftdi));
+    CheckCleanupStringP(ftdi_usb_open(&ftdi, ft232h_vid, ft232h_pid),
+                        open_failed,
+                        "Unable to open FTDI device: %s",
+                        ftdi_get_error_string(&ftdi));
 
-  CheckCleanupP(ftdi_usb_reset(&ftdi), reset_failed);
-  CheckCleanupP(ftdi_set_interface(&ftdi, INTERFACE_A), interface_failed);
+    CheckCleanupP(ftdi_usb_reset(&ftdi), reset_failed);
+    CheckCleanupP(ftdi_set_interface(&ftdi, INTERFACE_A), interface_failed);
 
-  unsigned chipid;
-  CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
+    unsigned chipid;
+    CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
 
-  debug(3, "FTDI chipid: %X", chipid);
+    debug(3, "FTDI chipid: %X", chipid);
 
-  {
-    MPSSESWDDriver swd(&ftdi);
-    CheckCleanup(run_experiment(swd), experiment_failed);
-  }
+    {
+        MPSSESWDDriver swd(&ftdi);
+        CheckCleanup(run_experiment(swd), experiment_failed);
+    }
 
 experiment_failed:
-  CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
+    CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
 
 read_failed:
 interface_failed:
 reset_failed:
-  CheckStringP(ftdi_usb_close(&ftdi),
-               "Unable to close FTDI device: %s",
-               ftdi_get_error_string(&ftdi));
+    CheckStringP(ftdi_usb_close(&ftdi),
+                 "Unable to close FTDI device: %s",
+                 ftdi_get_error_string(&ftdi));
 
 open_failed:
-  ftdi_deinit(&ftdi);
+    ftdi_deinit(&ftdi);
 
 init_failed:
-  return check_error;
+    return check_error;
 }
 
 
 /*******************************************************************************
  * System entry point.
  */
-int main(int argc, char const *argv[]) {
-  Error check_error = success;
+int main(int argc, char const ** argv)
+{
+    Error check_error = Err::success;
 
-  CheckCleanup(CommandLine::parse(argc, argv, CommandLine::arguments),
-               failure);
+    CheckCleanup(CommandLine::parse(argc, argv, CommandLine::arguments),
+                 failure);
 
-  log().set_level(CommandLine::debug.get());
+    log().set_level(CommandLine::debug.get());
 
-  CheckCleanup(error_main(argc, argv), failure);
-  return 0;
+    CheckCleanup(error_main(argc, argv), failure);
+    return 0;
 
 failure:
-  error_stack_print();
-  return 1;
+    error_stack_print();
+    return 1;
 }

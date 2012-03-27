@@ -29,6 +29,7 @@
 #include "swd_dp.h"
 #include "swd_mpsse.h"
 #include "swd.h"
+#include "arm.h"
 #include "lpc11xx_13xx.h"
 
 #include "libs/error/error_stack.h"
@@ -39,76 +40,89 @@
 #include <stdio.h>
 #include <ftdi.h>
 
-using namespace Err;
+using Err::Error;
+using Err::error_stack_print;
+
 using namespace Log;
+using namespace ARM;
 using namespace LPC11xx_13xx;
 
 /******************************************************************************/
 namespace CommandLine
 {
-    static Scalar<int>          debug ("debug",  true,  0,
-				       "What level of debug logging to use.");
+    static Scalar<int> debug ("debug",  true,  0,
+                              "What level of debug logging to use.");
 
     static Scalar<int> count("count", true, 32, "Words to dump");
 
-    static Argument     *arguments[] = {
-      &debug,
-      &count,
-      null };
+    static Argument * arguments[] =
+    {
+        &debug,
+        &count,
+        null
+    };
 }
 /******************************************************************************/
-static Error unmap_boot_sector(Target &target) {
-  return target.write_word(SYSCON::SYSMEMREMAP,
-                           SYSCON::SYSMEMREMAP_MAP_USER_FLASH);
+static Error unmap_boot_sector(Target & target)
+{ 
+    return target.write_word(SYSCON::SYSMEMREMAP,
+                             SYSCON::SYSMEMREMAP_MAP_USER_FLASH);
 }
 /******************************************************************************/
-static Error dump_flash(Target &target, unsigned n) {
-  uint32_t buffer;
-  notice("First %u words of Flash:", n);
-  for (unsigned i = 0; i < (n*4); i += 4) {
-    Check(target.read_word(i, &buffer));
-    notice(" [%08X] %08X", i, buffer);
-  }
+static Error dump_flash(Target & target, unsigned n)
+{
+    word_t buffer;
 
-  return success;
+    notice("First %u words of Flash:", n);
+
+    rptr_const<word_t> const top(n * sizeof(word_t));
+
+    for (rptr_const<word_t> i(0); i < top; ++i)
+    {
+        Check(target.read_word(i, &buffer));
+        notice(" [%08X] %08X", i.bits(), buffer);
+    }
+
+    return Err::success;
 }
 /******************************************************************************/
-static Error run_experiment(ftdi_context &ftdi) {
-  MPSSESWDDriver swd(&ftdi);
-  Check(swd.initialize());
-  Check(swd.enter_reset());
-  usleep(100000);
-  Check(swd.leave_reset());
+static Error run_experiment(ftdi_context & ftdi)
+{
+    MPSSESWDDriver swd(&ftdi);
+    Check(swd.initialize());
+    Check(swd.enter_reset());
+    usleep(100000);
+    Check(swd.leave_reset());
 
-  DebugAccessPort dap(swd);
-  Check(dap.reset_state());
+    DebugAccessPort dap(swd);
+    Check(dap.reset_state());
 
-  Target target(swd, dap, 0);
-  Check(target.initialize());
-  Check(target.halt());
+    Target target(swd, dap, 0);
+    Check(target.initialize());
+    Check(target.halt());
 
-  Check(unmap_boot_sector(target));
-  Check(dump_flash(target, CommandLine::count.get()));
+    Check(unmap_boot_sector(target));
+    Check(dump_flash(target, CommandLine::count.get()));
 
-  return success;
+    return Err::success;
 }
 /******************************************************************************/
 static Error error_main(int argc, char const ** argv)
 {
-    Error		check_error = success;
-    ftdi_context	ftdi;
-    uint		chipid;
+    Error check_error = Err::success;
+    ftdi_context ftdi;
 
     CheckCleanupP(ftdi_init(&ftdi), init_failed);
 
     CheckCleanupStringP(ftdi_usb_open(&ftdi, 0x0403, 0x6014), open_failed,
-			"Unable to open FTDI device: %s",
-			ftdi_get_error_string(&ftdi));
+                        "Unable to open FTDI device: %s",
+                        ftdi_get_error_string(&ftdi));
 
     CheckCleanupP(ftdi_usb_reset(&ftdi), reset_failed);
     CheckCleanupP(ftdi_set_interface(&ftdi, INTERFACE_A), interface_failed);
-    CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
 
+    unsigned chipid;
+    CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
     debug(1, "FTDI chipid: %X", chipid);
 
     CheckCleanup(run_experiment(ftdi), experiment_failed);
@@ -120,8 +134,8 @@ static Error error_main(int argc, char const ** argv)
   interface_failed:
   reset_failed:
     CheckStringP(ftdi_usb_close(&ftdi),
-		 "Unable to close FTDI device: %s",
-		 ftdi_get_error_string(&ftdi));
+                 "Unable to close FTDI device: %s",
+                 ftdi_get_error_string(&ftdi));
 
   open_failed:
     ftdi_deinit(&ftdi);
@@ -132,7 +146,7 @@ static Error error_main(int argc, char const ** argv)
 /******************************************************************************/
 int main(int argc, char const ** argv)
 {
-    Error	check_error = success;
+    Error check_error = Err::success;
 
     CheckCleanup(CommandLine::parse(argc, argv, CommandLine::arguments),
                  failure);

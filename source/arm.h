@@ -27,6 +27,9 @@ typedef uint32_t word_t;
 typedef uint16_t halfword_t;
 typedef uint8_t  byte_t;
 
+// Thumb code consists of aligned 16-bit units.
+typedef halfword_t thumb_code_t;
+
 
 /*******************************************************************************
  * ARM Core Registers

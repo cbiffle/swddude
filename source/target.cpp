@@ -73,22 +73,22 @@ Error Target::final_read_ap(word_t * data)
     return _dap.read_rdbuff(data);
 }
 
-Error Target::peek32(uint32_t address, word_t * data)
+Error Target::peek32(rptr_const<word_t> address, word_t * data)
 {
-    Check(write_ap(MEM_AP::TAR, address));
+    Check(write_ap(MEM_AP::TAR, address.bits()));
     CheckRetry(start_read_ap(MEM_AP::DRW), 100);
     CheckRetry(final_read_ap(data), 100);
 
-    debug(3, "peek32(%08X) = %08X", address, *data);
+    debug(3, "peek32(%08X) = %08X", address.bits(), *data);
 
     return Err::success;
 }
 
-Error Target::poke32(uint32_t address, word_t data)
+Error Target::poke32(rptr<word_t> address, word_t data)
 {
-    debug(3, "poke32(%08X, %08X)", address, data);
+    debug(3, "poke32(%08X, %08X)", address.bits(), data);
 
-    Check(write_ap(MEM_AP::TAR, address));
+    Check(write_ap(MEM_AP::TAR, address.bits()));
     CheckRetry(write_ap(MEM_AP::DRW, data), 100);
 
     // Block waiting for write to complete.
@@ -139,12 +139,10 @@ Error Target::initialize()
  * Target public methods: memory access
  */
 
-Error Target::read_words(uint32_t target_addr,
-                         void * host_buffer,
+Error Target::read_words(rptr_const<word_t> target_addr,
+                         word_t * host_buffer,
                          size_t count)
 {
-    word_t * host_buffer_as_words = static_cast<word_t *>(host_buffer);
-
     // Configure MEM-AP for auto-incrementing 32-bit transactions.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
     word_t csw;
@@ -155,30 +153,27 @@ Error Target::read_words(uint32_t target_addr,
     Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
     // Load Transfer Address Register with first address.
-    Check(write_ap(MEM_AP::TAR, target_addr));
+    Check(write_ap(MEM_AP::TAR, target_addr.bits()));
 
     // Transfer using pipelined reads.
     CheckRetry(start_read_ap(MEM_AP::DRW), 100);
     for (size_t i = 0; i < count; ++i)
     {
-        CheckRetry(step_read_ap(MEM_AP::DRW, &host_buffer_as_words[i]), 100);
+        CheckRetry(step_read_ap(MEM_AP::DRW, &host_buffer[i]), 100);
     }
 
     return Err::success;
 }
 
-Error Target::read_word(uint32_t addr, word_t * data)
+Error Target::read_word(rptr_const<word_t> addr, word_t * data)
 {
     return peek32(addr, data);
 }
 
-Error Target::write_words(void const * host_buffer,
-                          uint32_t target_addr,
+Error Target::write_words(word_t const * host_buffer,
+                          rptr<word_t> target_addr,
                           size_t count)
 {
-    word_t const * host_buffer_as_words =
-        static_cast<word_t const *>(host_buffer);
-
     // Configure MEM-AP for auto-incrementing 32-bit transactions.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
     word_t csw;
@@ -189,17 +184,17 @@ Error Target::write_words(void const * host_buffer,
     Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
     // Load Transfer Address Register with first address.
-    Check(write_ap(MEM_AP::TAR, target_addr));
+    Check(write_ap(MEM_AP::TAR, target_addr.bits()));
 
     for (size_t i = 0; i < count; ++i)
     {
-        Check(write_ap(MEM_AP::DRW, host_buffer_as_words[i]));
+        Check(write_ap(MEM_AP::DRW, host_buffer[i]));
     }
 
     return Err::success;
 }
 
-Error Target::write_word(uint32_t addr, word_t data)
+Error Target::write_word(rptr<word_t> addr, word_t data)
 {
     return poke32(addr, data);
 }
@@ -354,22 +349,25 @@ Error Target::get_breakpoint_count(size_t * n)
     return Err::success;
 }
 
-Error Target::enable_breakpoint(size_t n, uint32_t addr)
+Error Target::enable_breakpoint(size_t n, rptr_const<thumb_code_t> addr)
 {
     // Note: we ignore bit 0 of the address to permit Thumb-style addresses.
 
     // Address must point into code region (bottom 512MiB)
-    if (addr & 0xE0000000) return Err::argument_error;
+    if (addr >= rptr<thumb_code_t>(512 * 1024 * 1024))
+    {
+        return Err::argument_error;
+    }
 
     // Break on upper or lower halfword, depending on bit 1 of address.
-    word_t reg = BPU::BP_COMP0 + (n * sizeof(word_t));
-    return poke32(reg, ((addr & 2) ? BPU::BP_COMPx_MATCH_HIGH
+    rptr<word_t> reg = BPU::BP_COMP0 + n;
+    return poke32(reg, ((addr.bit<1>()) ? BPU::BP_COMPx_MATCH_HIGH
                                    : BPU::BP_COMPx_MATCH_LOW)
-                     | (addr & BPU::BP_COMPx_COMP_mask)
+                     | (addr.bits() & BPU::BP_COMPx_COMP_mask)
                      | BPU::BP_COMPx_ENABLE);
 }
 
 Error Target::disable_breakpoint(size_t n)
 {
-    return poke32(BPU::BP_COMP0 + (n * sizeof(word_t)), 0);
+    return poke32(BPU::BP_COMP0 + n, 0);
 }

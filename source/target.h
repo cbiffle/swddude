@@ -8,6 +8,7 @@
  */
 
 #include "arm.h"
+#include "rptr.h"
 
 #include "libs/error/error_stack.h"
 
@@ -45,8 +46,8 @@ class Target
     Err::Error final_read_ap(ARM::word_t * data);
 
     // Implementation factors of read_word/write_word.  TODO: remove?
-    Err::Error peek32(uint32_t address, ARM::word_t * data);
-    Err::Error poke32(uint32_t address, ARM::word_t data);
+    Err::Error peek32(rptr_const<ARM::word_t> address, ARM::word_t * data);
+    Err::Error poke32(rptr<ARM::word_t> address, ARM::word_t data);
 
 public:
     Target(SWDDriver &, DebugAccessPort &, uint8_t mem_ap_index);
@@ -74,15 +75,15 @@ public:
      *
      * count gives the number of words -- not bytes! -- to transfer.
      */
-    Err::Error read_words(uint32_t target_addr,
-                          void * host_buffer,
+    Err::Error read_words(rptr_const<ARM::word_t> target_addr,
+                          ARM::word_t * host_buffer,
                           size_t count);
 
     /*
      * Single-word equivalent of read_words.  Slightly cheaper for moving
      * small numbers of non-contiguous words around.
      */
-    Err::Error read_word(uint32_t target_addr,
+    Err::Error read_word(rptr_const<ARM::word_t> target_addr,
                          ARM::word_t * host_buffer);
 
     /*
@@ -98,15 +99,15 @@ public:
      *
      * count gives the number of words -- not bytes! -- to transfer.
      */
-    Err::Error write_words(void const * host_buffer,
-                           uint32_t target_addr,
+    Err::Error write_words(ARM::word_t const * host_buffer,
+                           rptr<ARM::word_t> target_addr,
                            size_t count);
 
     /*
      * Single-word equivalent of write_words.  Slightly cheaper for moving
      * small numbers of non-contiguous words around.
      */
-    Err::Error write_word(uint32_t target_addr, ARM::word_t data);
+    Err::Error write_word(rptr<ARM::word_t> target_addr, ARM::word_t data);
 
     /*
      * Reads the contents of one of the processor's core or special-purpose
@@ -119,6 +120,25 @@ public:
      * registers.  This will only work when the processor is halted.
      */
     Err::Error write_register(ARM::Register::Number, ARM::word_t);
+
+    /*
+     * Overload of write_register that allows rptrs to be used directly.
+     */
+    template <typename type>
+    inline Err::Error write_register(ARM::Register::Number r, rptr<type> p)
+    {
+        return write_register(r, p.bits());
+    }
+
+    /*
+     * Overload of write_register that allows rptr_consts to be used directly.
+     */
+    template <typename type>
+    inline Err::Error write_register(ARM::Register::Number r,
+                                     rptr_const<type> p)
+    {
+        return write_register(r, p.bits());
+    }
 
     /*
      * Triggers a processor-local reset (leaving debug state unchanged) and asks
@@ -189,7 +209,8 @@ public:
      *
      * The address must be halfword-aligned.
      */
-    Err::Error enable_breakpoint(size_t bp, uint32_t address);
+    Err::Error enable_breakpoint(size_t bp,
+                                 rptr_const<ARM::thumb_code_t> address);
 
     /*
      * Disables a hardware breakpoint.
