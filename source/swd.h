@@ -48,17 +48,11 @@ public:
    * state of the target is unknown -- in particular, the contents of the Debug
    * Access Port's SELECT and CTRL/STAT registers are undefined.
    *
-   * Callers may optionally provide a pointer to a 32-bit variable to receive
-   * the target Debug Access Port's IDCODE value.  This does not identify the
-   * target itself -- only the implementation of the DAP.  If the idcode pointer
-   * is zero, the IDCODE value won't be saved anywhere, and can be retrieved
-   * later using a DAP read.
-   *
    * Return values:
    *  Err::success - initialization complete, target responded, IDCODE valid.
    *  Err::failure - initialization failed or target failed to respond.
    */
-  virtual Err::Error initialize(uint32_t *idcode = 0) = 0;
+  virtual Err::Error initialize() = 0;
 
   /*
    * Asserts the target's reset line continuously until a call to leave_reset.

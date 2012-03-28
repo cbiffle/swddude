@@ -186,7 +186,7 @@ Error mpsse_setup(ftdi_context *ftdi) {
 MPSSESWDDriver::MPSSESWDDriver(ftdi_context *ftdi) : _ftdi(ftdi) {}
 
 
-Error MPSSESWDDriver::initialize(uint32_t *idcode_out) {
+Error MPSSESWDDriver::initialize() {
   Check(mpsse_setup(_ftdi));
 
   // SWD line reset sequence: 50 bits with SWDIO held high.
@@ -200,20 +200,6 @@ Error MPSSESWDDriver::initialize(uint32_t *idcode_out) {
 
   CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
           sizeof(commands));
-
-  uint32_t idcode;
-  Check(read(DebugAccessPort::kRegIDCODE, true, &idcode));
-
-  uint32_t version = idcode >> 28;
-  uint32_t partno = (idcode >> 12) & 0xFFFF;
-  uint32_t designer = (idcode >> 1) & 0x7FF;
-
-  debug(4, "Debug Port IDCODE = %08X", idcode);
-  debug(4, "  Version:  %X", version);
-  debug(4, "  Part:     %X", partno);
-  debug(4, "  Designer: %X", designer);
-
-  if (idcode_out) *idcode_out = idcode;
 
   return success;
 }
