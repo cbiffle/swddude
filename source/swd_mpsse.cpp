@@ -1,351 +1,436 @@
-#include "swd_mpsse.h"
+/*
+ * Copyright (c) 2012, Anton Staaf, Cliff L. Biffle
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the project nor the names of its contributors
+ *       may be used to endorse or promote products derived from this software
+ *       without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 
+#include "swd_mpsse.h"
 #include "swd_dp.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
 
 #include <ftdi.h>
-
 #include <unistd.h>
 
 using namespace Err;
 using namespace Log;
-
-/*******************************************************************************
- * MPSSE implementation
- */
 
 /*
  * Many of the MPSSE commands expect either an 8- or 16-bit count.  To get the
  * most out of those bits, it encodes a count N as N-1.  These macros produce
  * the individual bytes of the adjusted count.
  */
-#define FTH(n) ((((n) - 1) >> 8) & 0xFF)  // High 8 bits
-#define FTL(n) (((n) - 1) & 0xFF)         // Low 8 bits
-
-namespace {  // un-named namespace for implementation bits
+#define FTH(n) ((((n) - 1) >> 8) & 0xff) // High 8 bits
+#define FTL(n) ((((n) - 1) >> 0) & 0xff) // Low 8 bits
 
 /*
  * Maps FT232H I/O pins to SWD signals and protocol states.  The mapping
  * is fixed for now.
  */
-enum PinStates {
-  //                           RST  SWDI  SWDO  SWDCLK
-  kStateIdle        = 0x9,  //  1    0     0      1
-  kStateResetTarget = 0x1,  //  0    0     0      1
-  kStateResetSWD    = 0xB,  //  1    0     1      1
+enum PinStates
+{
+    //                              RST  SWDI  SWDO  SWDCLK
+    state_idle         = 0x09,  //  1    0     0     1
+    state_reset_target = 0x01,  //  0    0     0     1
+    state_reset_swd    = 0x0b,  //  1    0     1     1
 };
 
 /*
  * Pin directions for read and write -- used with PinStates above.
  */
-enum PinDirs {
-  //                  RST  SWDI  SWDO  SWDCLK
-  kDirWrite = 0xB,  // 1    0     1      1
-  kDirRead  = 0x9,  // 1    0     0      1
+enum PinDirs
+{
+    //                         RST  SWDI  SWDO  SWDCLK
+    direction_write = 0x0b,  // 1    0     1     1
+    direction_read  = 0x09,  // 1    0     0     1
 };
 
+uint8_t const swd_header_start  = 1 << 0;
 
-uint8_t const kSWDHeaderStart = 1 << 0;
+uint8_t const swd_header_ap     = 1 << 1;
+uint8_t const swd_header_dp     = 0 << 1;
 
-uint8_t const kSWDHeaderAP = 1 << 1;
-uint8_t const kSWDHeaderDP = 0 << 1;
+uint8_t const swd_header_read   = 1 << 2;
+uint8_t const swd_header_write  = 0 << 2;
 
-uint8_t const kSWDHeaderRead  = 1 << 2;
-uint8_t const kSWDHeaderWrite = 0 << 2;
+uint8_t const swd_header_parity = 1 << 5;
 
-uint8_t const kSWDHeaderParity = 1 << 5;
-uint8_t const kSWDHeaderPark = 1 << 7;
+uint8_t const swd_header_park   = 1 << 7;
 
-uint8_t swd_request(unsigned address, bool debug_port, bool write) {
-  bool parity = debug_port ^ write;
+/******************************************************************************/
+uint8 swd_request(int address, bool debug_port, bool write)
+{
+    bool        parity  = debug_port ^ write;
+    uint8_t     request = (swd_header_start |
+                           (debug_port ? swd_header_dp : swd_header_ap) |
+                           (write ? swd_header_write : swd_header_read) |
+                           ((address & 0x03) << 3) |
+                           swd_header_park);
 
-  uint8_t request = kSWDHeaderStart
-                  | (debug_port ? kSWDHeaderDP : kSWDHeaderAP)
-                  | (write ? kSWDHeaderWrite : kSWDHeaderRead)
-                  | ((address & 0x3) << 3)
-                  | kSWDHeaderPark;
+    switch (address & 0x03)
+    {
+        case 0:
+        case 3:
+            break;
 
-  // Incorporate address into parity
-  switch (address & 0x3) {
-    case 0:
-    case 3:
-      // Even number of ones, no change required.
-      break;
-
-    case 1:
-    case 2:
-      parity ^= 1;
-      break;
-  }
-
-  if (parity) request |= kSWDHeaderParity;
-
-  return request;
-}
-
-bool swd_parity(uint32_t data) {
-  uint32_t t = data;
-  t ^= t >> 16;
-  t ^= t >> 8;
-  t ^= t >> 4;
-  t ^= t >> 2;
-  t ^= t >> 1;
-
-  return t & 1;
-}
-
-Error setup_buffers(ftdi_context *ftdi) {
-  CheckP(ftdi_usb_purge_buffers(ftdi));
-
-  CheckP(ftdi_read_data_set_chunksize(ftdi, 65536));
-  CheckP(ftdi_write_data_set_chunksize(ftdi, 65536));
-
-  uint32_t read, write;
-  CheckP(ftdi_read_data_get_chunksize(ftdi, &read));
-  CheckP(ftdi_write_data_get_chunksize(ftdi, &write));
-
-  debug(4, "Chunksize (r/w): %u/%u", read, write);
-
-  return success;
-}
-
-Error mpsse_transaction(ftdi_context *ftdi,
-                        uint8_t *command, size_t command_count,
-                        uint8_t *response, size_t response_count,
-                        int timeout) {
-  size_t count = 0;
-
-  CheckEQ(ftdi_write_data(ftdi, command, command_count), (int) command_count);
-
-  for (int i = 0; i < timeout; ++i) {
-    count += CheckP(ftdi_read_data(ftdi, response + count,
-                                         response_count - count));
-
-    if (count >= response_count) {
-      debug(5, "MPSSE Response took %d attempts.", i + 1);
-      return success;
+        case 1:
+        case 2:
+            parity ^= 1;
+            break;
     }
 
-    usleep(1000);
-  }
+    if (parity)
+        request |= swd_header_parity;
 
-  return Err::timeout;
+    return request;
 }
+/******************************************************************************/
+bool swd_parity(uint32_t data)
+{
+    uint32_t    step = data ^ (data >> 16);
 
-Error mpsse_synchronize(ftdi_context *ftdi) {
-  uint8_t commands[] = { 0xAA };
-  uint8_t response[2];
+    step = step ^ (step >> 8);
+    step = step ^ (step >> 4);
+    step = step ^ (step >> 2);
+    step = step ^ (step >> 1);
 
-  Check(mpsse_transaction(ftdi, commands, sizeof(commands),
-                                response, sizeof(response),
-                                1000));
-
-  CheckEQ(response[0], 0xFA);
-  CheckEQ(response[1], 0xAA);
-
-  return success;
+    return (step & 1);
 }
+/******************************************************************************/
+Error mpsse_setup_buffers(ftdi_context * ftdi)
+{
+    unsigned    read;
+    unsigned    write;
 
-Error mpsse_setup(ftdi_context *ftdi) {
-  Check(setup_buffers(ftdi));
-  CheckP(ftdi_set_latency_timer(ftdi, 1));
+    CheckP(ftdi_usb_purge_buffers(ftdi));
 
-  // Switch into MPSSE mode!
-  CheckP(ftdi_set_bitmode(ftdi, 0x00, BITMODE_RESET));
-  CheckP(ftdi_set_bitmode(ftdi, 0x00, BITMODE_MPSSE));
+    CheckP(ftdi_read_data_set_chunksize(ftdi, 65536));
+    CheckP(ftdi_write_data_set_chunksize(ftdi, 65536));
 
-  Check(mpsse_synchronize(ftdi));
+    CheckP(ftdi_read_data_get_chunksize(ftdi, &read));
+    CheckP(ftdi_write_data_get_chunksize(ftdi, &write));
 
-  // We run the FT232H at 1MHz by dividing down the 60MHz clock by 60.
-  uint8_t commands[] = {
-    DIS_DIV_5,
-    DIS_ADAPTIVE,
-    DIS_3_PHASE,
+    debug(1, "Chunksize (r/w): %d/%d", read, write);
 
-    EN_3_PHASE,
-    TCK_DIVISOR, FTL(60/2), FTH(60/2),
-    SET_BITS_LOW, kStateIdle, kDirWrite,
-    SET_BITS_HIGH, 0, 0,
-  };
-
-  CheckEQ(ftdi_write_data(ftdi, commands, sizeof(commands)),
-          sizeof(commands));
-
-  return success;
+    return success;
 }
+/******************************************************************************/
+Error mpsse_write(ftdi_context * ftdi, uint8_t * buffer, size_t count)
+{
+    CheckEQ(ftdi_write_data(ftdi, buffer, count), (int) count);
 
-}  // un-named namespace for implementation factors
-
-
-/*******************************************************************************
- * MPSSESWDDriver class implementation
- */
-
-MPSSESWDDriver::MPSSESWDDriver(ftdi_context *ftdi) : _ftdi(ftdi) {}
-
-
-Error MPSSESWDDriver::initialize() {
-  Check(mpsse_setup(_ftdi));
-
-  // SWD line reset sequence: 50 bits with SWDIO held high.
-  uint8_t commands[] = {
-    SET_BITS_LOW, kStateResetSWD, kDirWrite,
-    CLK_BYTES, FTL(6), FTH(6),  // 48 bits...
-    CLK_BITS, FTL(2),           // ...and two more.
-    SET_BITS_LOW, kStateIdle, kDirWrite,
-    CLK_BITS, FTL(1),
-  };
-
-  CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
-          sizeof(commands));
-
-  return success;
+    return success;
 }
+/******************************************************************************/
+Error mpsse_read(ftdi_context * ftdi,
+                 uint8_t * buffer,
+                 size_t count,
+                 int timeout)
+{
+    size_t      received = 0;
 
+    /*
+     * This is a crude timeout mechanism.  The time that we wait will never
+     * be less than the requested number of milliseconds.  But it can certainly
+     * be more.
+     */
+    for (int i = 0; i < timeout; ++i)
+    {
+        received += CheckP(ftdi_read_data(ftdi,
+                                          buffer + received,
+                                          count - received));
 
-Error MPSSESWDDriver::enter_reset() {
-  uint8_t commands[] = { SET_BITS_LOW, kStateResetTarget, kDirWrite };
+        if (received >= count)
+        {
+            debug(2, "MPSSE Response took %d attempt%s.", i, i == 1 ? "" : "s");
+            return Err::success;
+        }
 
-  CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
-          sizeof(commands));
+        /*
+         * The latency timer is set to 1ms, so we wait that long before trying
+         * again.
+         */
+        usleep(1000);
+    }
 
-  return success;
+    return Err::timeout;
 }
+/******************************************************************************/
+Error mpsse_synchronize(ftdi_context * ftdi)
+{
+    uint8_t     commands[] = {0xaa};
+    uint8_t     response[2];
 
-Error MPSSESWDDriver::leave_reset() {
-  uint8_t commands[] = { SET_BITS_LOW, kStateIdle, kDirWrite };
+    Check(mpsse_write(ftdi, commands, sizeof(commands)));
+    Check(mpsse_read (ftdi, response, sizeof(response), 1000));
 
-  CheckEQ(ftdi_write_data(_ftdi, commands, sizeof(commands)),
-          sizeof(commands));
+    CheckEQ(response[0], 0xfa);
+    CheckEQ(response[1], 0xaa);
 
-  return success;
+    return Err::success;
 }
+/******************************************************************************/
+Error mpsse_setup(ftdi_context * ftdi, int clock_frequency_hz)
+{
+    int         divisor    = 30000000 / clock_frequency_hz;
+    uint8_t     commands[] =
+    {
+        DIS_DIV_5,
+        DIS_ADAPTIVE,
+        DIS_3_PHASE,
+        EN_3_PHASE,
+        TCK_DIVISOR,   FTL(divisor), FTH(divisor),
+        SET_BITS_LOW,  state_idle, direction_write,
+        SET_BITS_HIGH, 0x00, 0x00
+    };
 
+    Check(mpsse_setup_buffers(ftdi));
 
-Error MPSSESWDDriver::read(unsigned addr, bool debug_port, uint32_t *data) {
-  debug(4, "MPSSE SWD READ %08X %d", addr, debug_port);
+    CheckP(ftdi_set_latency_timer(ftdi, 1));
 
-  uint8_t request_commands[] = {
-    // Send SWD request byte
-    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
-        swd_request(addr, debug_port, false),
+    CheckP(ftdi_set_bitmode(ftdi, 0x00, BITMODE_RESET));
+    CheckP(ftdi_set_bitmode(ftdi, 0x00, BITMODE_MPSSE));
 
-    // Release the bus and clock out a turnaround bit.
-    SET_BITS_LOW, kStateIdle, kDirRead,
-    CLK_BITS, FTL(1),
+    Check(mpsse_synchronize(ftdi));
+    Check(mpsse_write(ftdi, commands, sizeof(commands)));
 
-    // Read in the response.
-    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
-  };
-
-  uint8_t data_commands[] = {
-    // Read in the data and parity fields.
-    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB, FTL(4), FTH(4),
-    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(2),
-  };
-
-  uint8_t cleanup_commands[] = {
-    // Take the bus back and clock out a turnaround bit.
-    SET_BITS_LOW, kStateIdle, kDirWrite,
-    CLK_BITS, FTL(1),
-  };
-
-
-  uint8_t response[6];
-
-  // response[0]: the three-bit response, MSB-justified.
-  Check(mpsse_transaction(_ftdi, request_commands, sizeof(request_commands),
-                                 response, 1,
-                                 1000));
-  uint8_t ack = response[0] >> 5;
-
-  debug(4, "SWD read got response %u", ack);
-  if (ack == 0x01) {  // SWD OK
-    // Read the data phase.
-    // response[4:1]: the 32-bit response word.
-    // response[5]: the parity bit in bit 6, turnaround (ignored) in bit 7.
-    Check(mpsse_transaction(_ftdi, data_commands, sizeof(data_commands),
-                                   response + 1, sizeof(response) - 1,
-                                   1000));
-    // Check for parity error.
-    uint32_t data_temp = response[1]
-                       | response[2] << 8
-                       | response[3] << 16
-                       | response[4] << 24;
-    uint8_t parity = (response[5] >> 6) & 1;
-    CheckEQ(parity, swd_parity(data_temp));
-    debug(4, "SWD read (%X, %d) = %08X complete with status %d",
-        addr, debug_port, data_temp, ack);
-    // All is well!
-    if (data) *data = data_temp;
-  }
- 
-  CheckEQ(ftdi_write_data(_ftdi, cleanup_commands, sizeof(cleanup_commands)),
-          sizeof(cleanup_commands));
-
-  switch (ack) {
-    case 1:  return success;
-    case 2:  return try_again;
-    case 4:  return failure;
-
-    default:
-      warning("Received unexpected SWD response %u", ack);
-      return failure;
-  }
+    return Err::success;
 }
+/******************************************************************************/
+Error swd_reset(ftdi_context * ftdi)
+{
+    // SWD line reset sequence: 50 bits with SWDIO held high.
+    uint8_t     commands[] =
+    {
+        SET_BITS_LOW, state_reset_swd, direction_write,
+        CLK_BYTES, 5, 0, CLK_BITS, 1,
+        SET_BITS_LOW, state_idle, direction_write,
+        CLK_BITS, 0
+    };
 
-Error MPSSESWDDriver::write(unsigned addr, bool debug_port, uint32_t data) {
-  debug(4, "MPSSE SWD WRITE %08X %d %08X", addr, debug_port, data);
+    Check(mpsse_write(ftdi, commands, sizeof(commands)));
 
-  uint8_t request_commands[] = {
-    // Write request byte.
-    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
-        swd_request(addr, debug_port, true),
-    // Release the bus and clock out a turnaround bit.
-    SET_BITS_LOW, kStateIdle, kDirRead,
-    CLK_BITS, FTL(1),
-
-    // Read response.
-    MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
-
-    // Take the bus back and clock out a turnaround bit.
-    SET_BITS_LOW, kStateIdle, kDirWrite,
-    CLK_BITS, FTL(1),
-  };
-
-  uint8_t data_commands[] = {
-    // Send the data word.
-    MPSSE_DO_WRITE | MPSSE_LSB, FTL(4), FTH(4),
-    (data >>  0) & 0xFF,
-    (data >>  8) & 0xFF,
-    (data >> 16) & 0xFF,
-    (data >> 24) & 0xFF,
-    // Send the parity bit.
-    MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(1),
-        swd_parity(data) ? 0xFF : 0x00,
-  };
-
-  uint8_t response[1];
-  Check(mpsse_transaction(_ftdi, request_commands, sizeof(request_commands),
-                                 response, sizeof(response),
-                                 1000));
-  
-  uint8_t ack = response[0] >> 5;
-
-  if (ack == 1) {  // SWD OK
-    CheckEQ(ftdi_write_data(_ftdi, data_commands, sizeof(data_commands)),
-            sizeof(data_commands));
-  }
-
-  switch (ack) {
-    case 1: return success;
-    case 2: return try_again;
-    case 4: return failure;
-
-    default:
-      warning("Received unexpected SWD response %u", ack);
-      return failure;
-  }
+    return success;
 }
+/******************************************************************************/
+Error swd_read(ftdi_context * ftdi,
+               int address,
+               bool debug_port,
+               uint32_t * data)
+{
+    uint8_t     request_commands[] =
+    {
+        // Write SWD header
+        MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
+        swd_request(address, debug_port, false),
+
+        // Turn the bidirectional data line around
+        SET_BITS_LOW, state_idle, direction_read,
+        // And clock out one bit
+        CLK_BITS, FTL(1),
+
+        // Now read in the target response
+        MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
+    };
+
+    uint8_t     data_commands[] =
+    {
+        // Then read in the target data
+        MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB, FTL(4), FTH(4),
+        // And finally read in the target parity and turn around
+        MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(2),
+    };
+
+    uint8_t     cleanup_commands[] =
+    {
+        // Turn the bidirectional data line back to an output
+        SET_BITS_LOW, state_idle, direction_write,
+        // And clock out one bit
+        CLK_BITS, FTL(1),
+    };
+
+    uint8       response[6] = {0};
+
+    // response[0]: the three-bit response, MSB-justified.
+    Check(mpsse_write(ftdi, request_commands, sizeof(request_commands)));
+    Check(mpsse_read(ftdi, response, 1, 1000));
+
+    uint8_t     ack = response[0] >> 5;
+
+    debug(4, "SWD read got response %u", ack);
+
+    if (ack == 0x01)
+    {
+        // SWD OK
+        // Read the data phase.
+        // response[4:1]: the 32-bit response word.
+        // response[5]: the parity bit in bit 6, turnaround (ignored) in bit 7.
+        Check(mpsse_write(ftdi, data_commands, sizeof(data_commands)));
+        Check(mpsse_read(ftdi, response + 1, sizeof(response) - 1, 1000));
+
+        *data = (response[1] <<  0 |
+                 response[2] <<  8 |
+                 response[3] << 16 |
+                 response[4] << 24);
+
+        // Check for parity error.
+        CheckEQ((response[5] >> 6) & 1, swd_parity(*data));
+
+        debug(4, "SWD read (%X, %d) = %08X complete with status %d",
+              address, debug_port, *data, ack);
+    }
+
+    Check(mpsse_write(ftdi, cleanup_commands, sizeof(cleanup_commands)));
+
+    switch (ack)
+    {
+        case 1:  return success;
+        case 2:  return try_again;
+        case 4:  return failure;
+
+        default:
+            warning("Received unexpected SWD response %u", ack);
+            return failure;
+    }
+}
+/******************************************************************************/
+Error swd_write(ftdi_context * ftdi,
+                int address,
+                bool debug_port,
+                uint32 data)
+{
+    bool        parity             = swd_parity(data);
+    uint8_t     request_commands[] =
+    {
+        // Write SWD header
+        MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
+        swd_request(address, debug_port, true),
+        // Turn the bidirectional data line around
+        SET_BITS_LOW, state_idle, direction_read,
+        // And clock out one bit
+        CLK_BITS, FTL(1),
+        // Now read in the target response
+        MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
+        // Turn the bidirectional data line back to an output
+        SET_BITS_LOW, state_idle, direction_write,
+        // And clock out one bit
+        CLK_BITS, FTL(1),
+    };
+
+    uint8_t     data_commands[] =
+    {
+        // Write the data
+        MPSSE_DO_WRITE | MPSSE_LSB, FTL(4), FTH(4),
+        (data >>  0) & 0xff,
+        (data >>  8) & 0xff,
+        (data >> 16) & 0xff,
+        (data >> 24) & 0xff,
+        // And finally write the parity bit
+        MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(1),
+        parity ? 0xff : 0x00,
+    };
+
+    uint8_t     response[1] = {0};
+
+    Check(mpsse_write(ftdi, request_commands, sizeof(request_commands)));
+    Check(mpsse_read (ftdi, response, sizeof(response), 1000));
+
+    uint8_t     ack = response[0] >> 5;
+
+    if (ack == 1)
+        Check(mpsse_write(ftdi, data_commands, sizeof(data_commands)));
+
+    switch (ack)
+    {
+        case 1: return success;
+        case 2: return try_again;
+        case 4: return failure;
+
+        default:
+            warning("Received unexpected SWD response %u", ack);
+            return failure;
+    }
+}
+/******************************************************************************/
+MPSSESWDDriver::MPSSESWDDriver(ftdi_context * ftdi) :
+    _ftdi(ftdi)
+{
+}
+/******************************************************************************/
+Error MPSSESWDDriver::initialize()
+{
+    Check(mpsse_setup(_ftdi, 1000000));
+    Check(swd_reset(_ftdi));
+
+    return success;
+}
+/******************************************************************************/
+Error MPSSESWDDriver::enter_reset()
+{
+    uint8_t     commands[] =
+    {
+        SET_BITS_LOW, state_reset_target, direction_write
+    };
+
+    Check(mpsse_write(_ftdi, commands, sizeof(commands)));
+
+    return success;
+}
+/******************************************************************************/
+Error MPSSESWDDriver::leave_reset()
+{
+    uint8_t     commands[] =
+    {
+        SET_BITS_LOW, state_idle, direction_write
+    };
+
+    Check(mpsse_write(_ftdi, commands, sizeof(commands)));
+
+    return success;
+}
+/******************************************************************************/
+Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
+{
+    uint32_t	read_data;
+
+    debug(4, "MPSSE SWD READ %08X %d", address, debug_port);
+
+    Check(swd_read(_ftdi, address, debug_port, &read_data));
+
+    if (data)
+	*data = read_data;
+
+    return success;
+}
+/******************************************************************************/
+Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
+{
+    debug(4, "MPSSE SWD WRITE %08X %d %08X", address, debug_port, data);
+
+    Check(swd_write(_ftdi, address, debug_port, data));
+
+    return success;
+}
+/******************************************************************************/
