@@ -132,7 +132,7 @@ Error mpsse_setup_buffers(ftdi_context * ftdi)
     CheckP(ftdi_read_data_get_chunksize(ftdi, &read));
     CheckP(ftdi_write_data_get_chunksize(ftdi, &write));
 
-    debug(1, "Chunksize (r/w): %d/%d", read, write);
+    debug(4, "Chunksize (r/w): %d/%d", read, write);
 
     return success;
 }
@@ -164,7 +164,7 @@ Error mpsse_read(ftdi_context * ftdi,
 
         if (received >= count)
         {
-            debug(2, "MPSSE Response took %d attempt%s.", i, i == 1 ? "" : "s");
+            debug(5, "MPSSE read took %d attempt%s.", i, i == 1 ? "" : "s");
             return Err::success;
         }
 
@@ -174,6 +174,9 @@ Error mpsse_read(ftdi_context * ftdi,
          */
         usleep(1000);
     }
+
+    debug(5, "MPSSE read failed after %d attempt%s.",
+	  timeout, timeout == 1 ? "" : "s");
 
     return Err::timeout;
 }
@@ -381,6 +384,8 @@ MPSSESWDDriver::MPSSESWDDriver(ftdi_context * ftdi) :
 /******************************************************************************/
 Error MPSSESWDDriver::initialize()
 {
+    debug(3, "MPSSESWDDriver::initialize");
+
     Check(mpsse_setup(_ftdi, 1000000));
     Check(swd_reset(_ftdi));
 
@@ -394,6 +399,8 @@ Error MPSSESWDDriver::enter_reset()
         SET_BITS_LOW, state_reset_target, direction_write
     };
 
+    debug(3, "MPSSESWDDriver::enter_reset");
+
     Check(mpsse_write(_ftdi, commands, sizeof(commands)));
 
     return success;
@@ -406,6 +413,8 @@ Error MPSSESWDDriver::leave_reset()
         SET_BITS_LOW, state_idle, direction_write
     };
 
+    debug(3, "MPSSESWDDriver::leave_reset");
+
     Check(mpsse_write(_ftdi, commands, sizeof(commands)));
 
     return success;
@@ -415,7 +424,7 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
 {
     uint32_t	read_data;
 
-    debug(4, "MPSSE SWD READ %08X %d", address, debug_port);
+    debug(3, "MPSSESWDDriver::read(%08X, %d)", address, debug_port);
 
     Check(swd_read(_ftdi, address, debug_port, &read_data));
 
@@ -427,7 +436,8 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
 /******************************************************************************/
 Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
 {
-    debug(4, "MPSSE SWD WRITE %08X %d %08X", address, debug_port, data);
+    debug(3, "MPSSESWDDriver::write(%08X, %d, %08X)",
+	  address, debug_port, data);
 
     Check(swd_write(_ftdi, address, debug_port, data));
 
