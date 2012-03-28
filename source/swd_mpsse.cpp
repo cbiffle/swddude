@@ -63,8 +63,8 @@ enum PinStates
 enum PinDirs
 {
     //                         RST  SWDI  SWDO  SWDCLK
-    direction_write = 0x0b,  // 1    0     1     1
-    direction_read  = 0x09,  // 1    0     0     1
+    direction_write = 0x2b,  // 1    0     1     1
+    direction_read  = 0x29,  // 1    0     0     1
 };
 
 uint8_t const swd_header_start  = 1 << 0;
@@ -206,7 +206,7 @@ Error mpsse_setup(ftdi_context * ftdi, int clock_frequency_hz)
         EN_3_PHASE,
         TCK_DIVISOR,   FTL(divisor), FTH(divisor),
         SET_BITS_LOW,  state_idle, direction_write,
-        SET_BITS_HIGH, 0x00, 0x00
+        SET_BITS_HIGH, 0b10100111, 0b01011000,
     };
 
     Check(mpsse_setup_buffers(ftdi));
@@ -248,12 +248,11 @@ Error swd_read(ftdi_context * ftdi,
         // Write SWD header
         MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
         swd_request(address, debug_port, false),
-
         // Turn the bidirectional data line around
         SET_BITS_LOW, state_idle, direction_read,
+	SET_BITS_HIGH, 0b10110111, 0b01011000,
         // And clock out one bit
         CLK_BITS, FTL(1),
-
         // Now read in the target response
         MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
     };
@@ -270,6 +269,7 @@ Error swd_read(ftdi_context * ftdi,
     {
         // Turn the bidirectional data line back to an output
         SET_BITS_LOW, state_idle, direction_write,
+	SET_BITS_HIGH, 0b10100111, 0b01011000,
         // And clock out one bit
         CLK_BITS, FTL(1),
     };
@@ -332,12 +332,14 @@ Error swd_write(ftdi_context * ftdi,
         swd_request(address, debug_port, true),
         // Turn the bidirectional data line around
         SET_BITS_LOW, state_idle, direction_read,
+	SET_BITS_HIGH, 0b10110111, 0b01011000,
         // And clock out one bit
         CLK_BITS, FTL(1),
         // Now read in the target response
         MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
         // Turn the bidirectional data line back to an output
         SET_BITS_LOW, state_idle, direction_write,
+	SET_BITS_HIGH, 0b10100111, 0b01011000,
         // And clock out one bit
         CLK_BITS, FTL(1),
     };
@@ -396,7 +398,8 @@ Error MPSSESWDDriver::enter_reset()
 {
     uint8_t     commands[] =
     {
-        SET_BITS_LOW, state_reset_target, direction_write
+        SET_BITS_LOW, state_reset_target, direction_write,
+	SET_BITS_HIGH, 0b10100101, 0b01011010,
     };
 
     debug(3, "MPSSESWDDriver::enter_reset");
@@ -410,7 +413,8 @@ Error MPSSESWDDriver::leave_reset()
 {
     uint8_t     commands[] =
     {
-        SET_BITS_LOW, state_idle, direction_write
+        SET_BITS_LOW, state_idle, direction_write,
+	SET_BITS_HIGH, 0b10100111, 0b01011000,
     };
 
     debug(3, "MPSSESWDDriver::leave_reset");
