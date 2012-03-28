@@ -156,7 +156,7 @@ Error mpsse_read(ftdi_context * ftdi,
      * be less than the requested number of milliseconds.  But it can certainly
      * be more.
      */
-    for (int i = 0; i < timeout; ++i)
+    for (int i = 1; i < timeout + 1; ++i)
     {
         received += CheckP(ftdi_read_data(ftdi,
                                           buffer + received,
