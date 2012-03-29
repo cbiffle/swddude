@@ -75,27 +75,32 @@ namespace CommandLine
     flash("flash", true, "",
           "Binary program to load");
 
+    static Scalar<String>
+    programmer("programmer", true, "um232h",
+	       "FTDI based programmer to use");
+
     static Scalar<bool>
     fix_lpc_checksum("fix_lpc_checksum", true, false,
                      "When true, the loader will write the LPC-style "
                      "checksum.");
 
     static Scalar<int>
-    vid("vid", true, 0x0403,
-        "FT2232 VID");
+    vid("vid", true, 0,
+        "FTDI VID");
 
     static Scalar<int>
-    pid("pid", true, 0x6014,
-        "FT2232 PID");
+    pid("pid", true, 0,
+        "FTDI PID");
 
     static Scalar<int>
     interface("interface", true, 0,
-              "FT2232 interface");
+              "FTDI interface");
 
     static Argument     *arguments[] =
     {
         &debug,
         &flash,
+	&programmer,
         &fix_lpc_checksum,
         &vid,
         &pid,
@@ -479,6 +484,14 @@ comms_failure:
     return check_error;
 }
 
+static Error lookup_programmer(String name, MPSSEConfig const * * config)
+{
+    if      (name.equal("um232h"))      *config = &um232h_config;
+    else if (name.equal("bus_blaster"))	*config = &bus_blaster_config;
+    else return Err::failure;
+
+    return Err::success;
+}
 
 /*******************************************************************************
  * Entry point (sort of -- see main below)
@@ -491,7 +504,23 @@ static Error error_main(int argc, char const ** argv)
     libusb_device_handle *      handle;
     libusb_device *             device;
     ftdi_context                ftdi;
-    ftdi_interface              interface;
+    MPSSEConfig const *		config;
+
+    Check(lookup_programmer(CommandLine::programmer.get(), &config));
+
+    ftdi_interface interface = ftdi_interface(INTERFACE_A +
+					      config->default_interface);
+    uint16_t       vid       = config->default_vid;
+    uint16_t       pid       = config->default_pid;
+
+    if (CommandLine::interface.set())
+	interface = ftdi_interface(INTERFACE_A + CommandLine::interface.get());
+
+    if (CommandLine::vid.set())
+	vid = CommandLine::vid.get();
+
+    if (CommandLine::pid.set())
+	pid = CommandLine::pid.get();
 
     CheckCleanupP(libusb_init(&libusb), libusb_init_failed);
     CheckCleanupP(ftdi_init(&ftdi), ftdi_init_failed);
@@ -500,14 +529,11 @@ static Error error_main(int argc, char const ** argv)
      * Locate FTDI chip using it's VID:PID pair.  This doesn't uniquely identify
      * the programmer so this will need to be improved.
      */
-    handle = libusb_open_device_with_vid_pid(libusb,
-                                             CommandLine::vid.get(),
-                                             CommandLine::pid.get());
+    handle = libusb_open_device_with_vid_pid(libusb, vid, pid);
 
     CheckCleanupStringB(handle, libusb_open_failed,
                         "No device found with VID:PID = 0x%04x:0x%04x\n",
-                        CommandLine::vid.get(),
-                        CommandLine::pid.get());
+			vid, pid);
 
     /*
      * Request that any attached kernel driver be detached.  libftdi will also
@@ -520,8 +546,6 @@ static Error error_main(int argc, char const ** argv)
     /*
      * The interface must be selected before the ftdi device can be opened.
      */
-    interface = ftdi_interface(INTERFACE_A + CommandLine::interface.get());
-
     CheckCleanupStringP(ftdi_set_interface(&ftdi, interface),
                         interface_failed,
                         "Unable to set FTDI device interface: %s",
@@ -546,7 +570,7 @@ static Error error_main(int argc, char const ** argv)
     }
 
     {
-        MPSSESWDDriver swd(&ftdi);
+        MPSSESWDDriver swd(*config, &ftdi);
         CheckCleanup(run_experiment(swd), experiment_failed);
     }
 
