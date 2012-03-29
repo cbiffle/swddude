@@ -238,6 +238,20 @@ Error swd_reset(ftdi_context * ftdi)
     return success;
 }
 /******************************************************************************/
+Error swd_response_to_error(uint8_t response)
+{
+    switch (response)
+    {
+        case 1: return success;
+        case 2: return try_again;
+        case 4: return failure;
+
+        default:
+            warning("Received unexpected SWD response %u", response);
+            return failure;
+    }
+}
+/******************************************************************************/
 Error swd_read(ftdi_context * ftdi,
                int address,
                bool debug_port,
@@ -274,7 +288,7 @@ Error swd_read(ftdi_context * ftdi,
         CLK_BITS, FTL(1),
     };
 
-    uint8       response[6] = {0};
+    uint8_t     response[6] = {0};
 
     // response[0]: the three-bit response, MSB-justified.
     Check(mpsse_write(ftdi, request_commands, sizeof(request_commands)));
@@ -307,16 +321,7 @@ Error swd_read(ftdi_context * ftdi,
 
     Check(mpsse_write(ftdi, cleanup_commands, sizeof(cleanup_commands)));
 
-    switch (ack)
-    {
-        case 1:  return success;
-        case 2:  return try_again;
-        case 4:  return failure;
-
-        default:
-            warning("Received unexpected SWD response %u", ack);
-            return failure;
-    }
+    return swd_response_to_error(ack);
 }
 /******************************************************************************/
 Error swd_write(ftdi_context * ftdi,
@@ -364,19 +369,12 @@ Error swd_write(ftdi_context * ftdi,
 
     uint8_t     ack = response[0] >> 5;
 
-    if (ack == 1)
+    debug(4, "SWD write got response %u", ack);
+
+    if (ack == 0x01)
         Check(mpsse_write(ftdi, data_commands, sizeof(data_commands)));
 
-    switch (ack)
-    {
-        case 1: return success;
-        case 2: return try_again;
-        case 4: return failure;
-
-        default:
-            warning("Received unexpected SWD response %u", ack);
-            return failure;
-    }
+    return swd_response_to_error(ack);
 }
 /******************************************************************************/
 MPSSESWDDriver::MPSSESWDDriver(ftdi_context * ftdi) :
