@@ -535,12 +535,6 @@ static Error error_main(int argc, char const ** argv)
                         "No device found with VID:PID = 0x%04x:0x%04x\n",
 			vid, pid);
 
-    /*
-     * Request that any attached kernel driver be detached.  libftdi will also
-     * do this, but making it explicit here allows us more control over when
-     * we reattach the kernel driver.
-     */
-    CheckCleanupP(libusb_detach_kernel_driver(handle, 1), detach_failed);
     CheckCleanupB(device = libusb_get_device(handle), get_failed);
 
     /*
@@ -586,9 +580,6 @@ static Error error_main(int argc, char const ** argv)
   open_failed:
   interface_failed:
   get_failed:
-    libusb_attach_kernel_driver(handle, 1);
-
-  detach_failed:
     libusb_close(handle);
 
   libusb_open_failed:
