@@ -34,8 +34,9 @@
 #include <ftdi.h>
 #include <unistd.h>
 
-using namespace Err;
 using namespace Log;
+
+using Err::Error;
 
 /*
  * Many of the MPSSE commands expect either an 8- or 16-bit count.  To get the
@@ -134,14 +135,14 @@ Error mpsse_setup_buffers(ftdi_context * ftdi)
 
     debug(4, "Chunksize (r/w): %d/%d", read, write);
 
-    return success;
+    return Err::success;
 }
 /******************************************************************************/
 Error mpsse_write(ftdi_context * ftdi, uint8_t * buffer, size_t count)
 {
     CheckEQ(ftdi_write_data(ftdi, buffer, count), (int) count);
 
-    return success;
+    return Err::success;
 }
 /******************************************************************************/
 Error mpsse_read(ftdi_context * ftdi,
@@ -235,20 +236,20 @@ Error swd_reset(ftdi_context * ftdi)
 
     Check(mpsse_write(ftdi, commands, sizeof(commands)));
 
-    return success;
+    return Err::success;
 }
 /******************************************************************************/
 Error swd_response_to_error(uint8_t response)
 {
     switch (response)
     {
-        case 1: return success;
-        case 2: return try_again;
-        case 4: return failure;
+        case 1: return Err::success;
+        case 2: return Err::try_again;
+        case 4: return Err::failure;
 
         default:
             warning("Received unexpected SWD response %u", response);
-            return failure;
+            return Err::failure;
     }
 }
 /******************************************************************************/
@@ -389,7 +390,7 @@ Error MPSSESWDDriver::initialize()
     Check(mpsse_setup(_ftdi, 1000000));
     Check(swd_reset(_ftdi));
 
-    return success;
+    return Err::success;
 }
 /******************************************************************************/
 Error MPSSESWDDriver::enter_reset()
@@ -404,7 +405,7 @@ Error MPSSESWDDriver::enter_reset()
 
     Check(mpsse_write(_ftdi, commands, sizeof(commands)));
 
-    return success;
+    return Err::success;
 }
 /******************************************************************************/
 Error MPSSESWDDriver::leave_reset()
@@ -419,7 +420,7 @@ Error MPSSESWDDriver::leave_reset()
 
     Check(mpsse_write(_ftdi, commands, sizeof(commands)));
 
-    return success;
+    return Err::success;
 }
 /******************************************************************************/
 Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
@@ -433,7 +434,7 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
     if (data)
 	*data = read_data;
 
-    return success;
+    return Err::success;
 }
 /******************************************************************************/
 Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
@@ -443,6 +444,6 @@ Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
 
     Check(swd_write(_ftdi, address, debug_port, data));
 
-    return success;
+    return Err::success;
 }
 /******************************************************************************/
