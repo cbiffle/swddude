@@ -41,8 +41,11 @@ boards just begging to be used.
 How Do I Use It?
 ----------------
 
-You'll need an FTDI FT232H breakout board -- and, of course, a supported
-microcontroller with a SWD interface.
+You'll need a supported programmer and, of course, a supported microcontroller
+with a SWD interface.  Currently `swddude` supports using the Bus Blaster (v2.5
+programmed with the KT-link compatible CPLD configuration) or any FTDI
+development board with an FT232H or FT2232H chip that has been wired to the SWD
+lines of your microcontroller.
 
 Wire up your micro using the configuration described in `swd_mpsse.h`.
 
@@ -54,7 +57,7 @@ which we use to convert it into a SWD interface.  For best results, build
 After checking out `swddude`, build it like so:
 
     $ cd swddude/source
-    $ make release/swddude
+    $ make swddude release
 
 This will deposit a `swddude` binary in `swddude/source/release`.
 
@@ -63,6 +66,10 @@ binary format -- not ELF, and not Intel hex.  Assuming it's in a file called
 `firmware.bin`, you run:
 
     $ swddude -flash firmware.bin -fix_lpc_checksum
+
+This will default to the um232h programmer (FTDI's FT232H development board)
+configuration.  If you are using a Bus Blaster, you should add
+`-programmer bus_blaster` to the command line above.
 
 That last option, `-fix_lpc_checksum`, adds the vector table checksum expected
 by the NXP LPC series.  Without it, your firmware won't run!  If some other tool
