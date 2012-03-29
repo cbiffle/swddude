@@ -17,24 +17,24 @@ struct ftdi_context;
 
 struct MPSSEPinConfig
 {
-    uint8_t	low_state;
-    uint8_t	low_direction;
-    uint8_t	high_state;
-    uint8_t	high_direction;
+    uint8_t     low_state;
+    uint8_t     low_direction;
+    uint8_t     high_state;
+    uint8_t     high_direction;
 };
 
 struct MPSSEConfig
 {
-    uint16_t		default_vid;
-    uint16_t		default_pid;
-    int			default_interface;
-    MPSSEPinConfig	idle_read;
-    MPSSEPinConfig	idle_write;
-    MPSSEPinConfig	reset_target;
-    MPSSEPinConfig	reset_swd;
+    uint16_t            default_vid;
+    uint16_t            default_pid;
+    int                 default_interface;
+    MPSSEPinConfig      idle_read;
+    MPSSEPinConfig      idle_write;
+    MPSSEPinConfig      reset_target;
+    MPSSEPinConfig      reset_swd;
 };
 
-MPSSEConfig const	um232h_config =
+MPSSEConfig const       um232h_config =
 {
     0x0403, 0x6014, 0,
     {0x09, 0x09, 0x00, 0x00}, //idle read
@@ -43,7 +43,7 @@ MPSSEConfig const	um232h_config =
     {0x0b, 0x0b, 0x00, 0x00}, //reset swd
 };
 
-MPSSEConfig const	bus_blaster_config =
+MPSSEConfig const       bus_blaster_config =
 {
     0x0403, 0x6010, 0,
     {0x09, 0x29, 0xb7, 0x58}, //idle read
@@ -54,12 +54,12 @@ MPSSEConfig const	bus_blaster_config =
 
 class MPSSESWDDriver : public SWDDriver
 {
-    MPSSEConfig	const &	_config;
-    ftdi_context *	_ftdi;
+    MPSSEConfig const & _config;
+    ftdi_context *      _ftdi;
 
 public:
     MPSSESWDDriver(MPSSEConfig const & config,
-		   ftdi_context * ftdi);
+                   ftdi_context * ftdi);
 
     /*
      * See SWDDriver for documentation of these functions.

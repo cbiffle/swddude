@@ -155,7 +155,7 @@ Error mpsse_read(ftdi_context * ftdi,
     }
 
     debug(5, "MPSSE read failed after %d attempt%s.",
-	  timeout, timeout == 1 ? "" : "s");
+          timeout, timeout == 1 ? "" : "s");
 
     return Err::timeout;
 }
@@ -175,8 +175,8 @@ Error mpsse_synchronize(ftdi_context * ftdi)
 }
 /******************************************************************************/
 Error mpsse_setup(MPSSEConfig const & config,
-		  ftdi_context * ftdi,
-		  int clock_frequency_hz)
+                  ftdi_context * ftdi,
+                  int clock_frequency_hz)
 {
     int         divisor    = 30000000 / clock_frequency_hz;
     uint8_t     commands[] =
@@ -187,11 +187,11 @@ Error mpsse_setup(MPSSEConfig const & config,
         EN_3_PHASE,
         TCK_DIVISOR,   FTL(divisor), FTH(divisor),
         SET_BITS_LOW,
-	config.idle_write.low_state,
-	config.idle_write.low_direction,
-	SET_BITS_HIGH,
-	config.idle_write.high_state,
-	config.idle_write.high_direction,
+        config.idle_write.low_state,
+        config.idle_write.low_direction,
+        SET_BITS_HIGH,
+        config.idle_write.high_state,
+        config.idle_write.high_direction,
     };
 
     Check(mpsse_setup_buffers(ftdi));
@@ -211,31 +211,31 @@ Error swd_reset(MPSSEConfig const & config, ftdi_context * ftdi)
 {
     uint8_t     commands[] =
     {
-	/*
-	 * Pull SWDIO high
-	 */
+        /*
+         * Pull SWDIO high
+         */
         SET_BITS_LOW,
-	config.reset_swd.low_state,
-	config.reset_swd.low_direction,
-	SET_BITS_HIGH,
-	config.reset_swd.high_state,
-	config.reset_swd.high_direction,
+        config.reset_swd.low_state,
+        config.reset_swd.low_direction,
+        SET_BITS_HIGH,
+        config.reset_swd.high_state,
+        config.reset_swd.high_direction,
 
-	/*
-	 * Generate 50 clocks (6 bytes + 2 bits)
-	 */
+        /*
+         * Generate 50 clocks (6 bytes + 2 bits)
+         */
         CLK_BYTES, FTL(6), FTH(6),
-	CLK_BITS, FTL(2),
+        CLK_BITS, FTL(2),
 
-	/*
-	 * Release SWDIO
-	 */
+        /*
+         * Release SWDIO
+         */
         SET_BITS_LOW,
-	config.idle_write.low_state,
-	config.idle_write.low_direction,
-	SET_BITS_HIGH,
-	config.idle_write.high_state,
-	config.idle_write.high_direction,
+        config.idle_write.low_state,
+        config.idle_write.low_direction,
+        SET_BITS_HIGH,
+        config.idle_write.high_state,
+        config.idle_write.high_direction,
 
         CLK_BITS, FTL(1)
     };
@@ -260,7 +260,7 @@ Error swd_response_to_error(uint8_t response)
 }
 /******************************************************************************/
 MPSSESWDDriver::MPSSESWDDriver(MPSSEConfig const & config,
-			       ftdi_context * ftdi) :
+                               ftdi_context * ftdi) :
     _config(config),
     _ftdi(ftdi)
 {
@@ -281,11 +281,11 @@ Error MPSSESWDDriver::enter_reset()
     uint8_t     commands[] =
     {
         SET_BITS_LOW,
-	_config.reset_target.low_state,
-	_config.reset_target.low_direction,
-	SET_BITS_HIGH,
-	_config.reset_target.high_state,
-	_config.reset_target.high_direction,
+        _config.reset_target.low_state,
+        _config.reset_target.low_direction,
+        SET_BITS_HIGH,
+        _config.reset_target.high_state,
+        _config.reset_target.high_direction,
     };
 
     debug(3, "MPSSESWDDriver::enter_reset");
@@ -300,11 +300,11 @@ Error MPSSESWDDriver::leave_reset()
     uint8_t     commands[] =
     {
         SET_BITS_LOW,
-	_config.idle_write.low_state,
-	_config.idle_write.low_direction,
-	SET_BITS_HIGH,
-	_config.idle_write.high_state,
-	_config.idle_write.high_direction,
+        _config.idle_write.low_state,
+        _config.idle_write.low_direction,
+        SET_BITS_HIGH,
+        _config.idle_write.high_state,
+        _config.idle_write.high_direction,
     };
 
     debug(3, "MPSSESWDDriver::leave_reset");
@@ -325,11 +325,11 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
         swd_request(address, debug_port, false),
         // Turn the bidirectional data line around
         SET_BITS_LOW,
-	_config.idle_read.low_state,
-	_config.idle_read.low_direction,
-	SET_BITS_HIGH,
-	_config.idle_read.high_state,
-	_config.idle_read.high_direction,
+        _config.idle_read.low_state,
+        _config.idle_read.low_direction,
+        SET_BITS_HIGH,
+        _config.idle_read.high_state,
+        _config.idle_read.high_direction,
         // And clock out one bit
         CLK_BITS, FTL(1),
         // Now read in the target response
@@ -348,11 +348,11 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
     {
         // Turn the bidirectional data line back to an output
         SET_BITS_LOW,
-	_config.idle_write.low_state,
-	_config.idle_write.low_direction,
-	SET_BITS_HIGH,
-	_config.idle_write.high_state,
-	_config.idle_write.high_direction,
+        _config.idle_write.low_state,
+        _config.idle_write.low_direction,
+        SET_BITS_HIGH,
+        _config.idle_write.high_state,
+        _config.idle_write.high_direction,
         // And clock out one bit
         CLK_BITS, FTL(1),
     };
@@ -369,7 +369,7 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
 
     if (ack == 0x01)
     {
-	uint32_t	temp;
+        uint32_t        temp;
 
         // SWD OK
         // Read the data phase.
@@ -379,15 +379,15 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
         Check(mpsse_read(_ftdi, response + 1, sizeof(response) - 1, 1000));
 
         temp = (response[1] <<  0 |
-		response[2] <<  8 |
-		response[3] << 16 |
-		response[4] << 24);
+                response[2] <<  8 |
+                response[3] << 16 |
+                response[4] << 24);
 
         // Check for parity error.
         CheckEQ((response[5] >> 6) & 1, swd_parity(temp));
 
-	if (data)
-	    *data = temp;
+        if (data)
+            *data = temp;
 
         debug(4, "SWD read (%X, %d) = %08X complete with status %d",
               address, debug_port, temp, ack);
@@ -408,22 +408,22 @@ Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
         swd_request(address, debug_port, true),
         // Turn the bidirectional data line around
         SET_BITS_LOW,
-	_config.idle_read.low_state,
-	_config.idle_read.low_direction,
-	SET_BITS_HIGH,
-	_config.idle_read.high_state,
-	_config.idle_read.high_direction,
+        _config.idle_read.low_state,
+        _config.idle_read.low_direction,
+        SET_BITS_HIGH,
+        _config.idle_read.high_state,
+        _config.idle_read.high_direction,
         // And clock out one bit
         CLK_BITS, FTL(1),
         // Now read in the target response
         MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(3),
         // Turn the bidirectional data line back to an output
         SET_BITS_LOW,
-	_config.idle_write.low_state,
-	_config.idle_write.low_direction,
-	SET_BITS_HIGH,
-	_config.idle_write.high_state,
-	_config.idle_write.high_direction,
+        _config.idle_write.low_state,
+        _config.idle_write.low_direction,
+        SET_BITS_HIGH,
+        _config.idle_write.high_state,
+        _config.idle_write.high_direction,
         // And clock out one bit
         CLK_BITS, FTL(1),
     };
@@ -442,7 +442,7 @@ Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
     };
 
     debug(3, "MPSSESWDDriver::write(%08X, %d, %08X)",
-	  address, debug_port, data);
+          address, debug_port, data);
 
     uint8_t     response[1] = {0};
 

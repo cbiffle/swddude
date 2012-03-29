@@ -77,7 +77,7 @@ namespace CommandLine
 
     static Scalar<String>
     programmer("programmer", true, "um232h",
-	       "FTDI based programmer to use");
+               "FTDI based programmer to use");
 
     static Scalar<bool>
     fix_lpc_checksum("fix_lpc_checksum", true, false,
@@ -100,7 +100,7 @@ namespace CommandLine
     {
         &debug,
         &flash,
-	&programmer,
+        &programmer,
         &fix_lpc_checksum,
         &vid,
         &pid,
@@ -419,7 +419,7 @@ wrong_size:
 
 static Error read_idcode(SWDDriver & swd, uint32_t * idcode_out)
 {
-    uint32_t	idcode;
+    uint32_t    idcode;
 
     Check(swd.read(DebugAccessPort::kRegIDCODE, true, &idcode));
 
@@ -429,7 +429,7 @@ static Error read_idcode(SWDDriver & swd, uint32_t * idcode_out)
     debug(5, "Designer: %X", (idcode >> 1) & 0x7FF);
 
     if (idcode_out)
-	*idcode_out = idcode;
+        *idcode_out = idcode;
 
     return Err::success;
 }
@@ -487,7 +487,7 @@ comms_failure:
 static Error lookup_programmer(String name, MPSSEConfig const * * config)
 {
     if      (name.equal("um232h"))      *config = &um232h_config;
-    else if (name.equal("bus_blaster"))	*config = &bus_blaster_config;
+    else if (name.equal("bus_blaster")) *config = &bus_blaster_config;
     else return Err::failure;
 
     return Err::success;
@@ -504,23 +504,23 @@ static Error error_main(int argc, char const ** argv)
     libusb_device_handle *      handle;
     libusb_device *             device;
     ftdi_context                ftdi;
-    MPSSEConfig const *		config;
+    MPSSEConfig const *         config;
 
     Check(lookup_programmer(CommandLine::programmer.get(), &config));
 
     ftdi_interface interface = ftdi_interface(INTERFACE_A +
-					      config->default_interface);
+                                              config->default_interface);
     uint16_t       vid       = config->default_vid;
     uint16_t       pid       = config->default_pid;
 
     if (CommandLine::interface.set())
-	interface = ftdi_interface(INTERFACE_A + CommandLine::interface.get());
+        interface = ftdi_interface(INTERFACE_A + CommandLine::interface.get());
 
     if (CommandLine::vid.set())
-	vid = CommandLine::vid.get();
+        vid = CommandLine::vid.get();
 
     if (CommandLine::pid.set())
-	pid = CommandLine::pid.get();
+        pid = CommandLine::pid.get();
 
     CheckCleanupP(libusb_init(&libusb), libusb_init_failed);
     CheckCleanupP(ftdi_init(&ftdi), ftdi_init_failed);
@@ -533,7 +533,7 @@ static Error error_main(int argc, char const ** argv)
 
     CheckCleanupStringB(handle, libusb_open_failed,
                         "No device found with VID:PID = 0x%04x:0x%04x\n",
-			vid, pid);
+                        vid, pid);
 
     CheckCleanupB(device = libusb_get_device(handle), get_failed);
 
