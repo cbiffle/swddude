@@ -51,7 +51,6 @@
 #include <inttypes.h>
 
 using Err::Error;
-using Err::error_stack_print;
 
 using namespace Log;
 using namespace ARM;
@@ -609,6 +608,6 @@ int main(int argc, char const ** argv)
     return 0;
 
 failure:
-    error_stack_print();
+    Err::stack()->print();
     return 1;
 }
