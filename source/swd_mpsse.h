@@ -64,7 +64,7 @@ public:
     /*
      * See SWDDriver for documentation of these functions.
      */
-    virtual Err::Error initialize();
+    virtual Err::Error initialize(uint32_t *);
     virtual Err::Error enter_reset();
     virtual Err::Error leave_reset();
     virtual Err::Error read(unsigned address, bool debug_port, uint32_t *data);

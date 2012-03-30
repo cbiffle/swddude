@@ -416,23 +416,6 @@ wrong_size:
     return check_error;
 }
 
-static Error read_idcode(SWDDriver & swd, uint32_t * idcode_out)
-{
-    uint32_t    idcode;
-
-    Check(swd.read(DebugAccessPort::kRegIDCODE, true, &idcode));
-
-    debug(4, "Debug Port IDCODE = %08X", idcode);
-    debug(5, "Version:  %X", idcode >> 28);
-    debug(5, "Part:     %X", (idcode >> 12) & 0xFFFF);
-    debug(5, "Designer: %X", (idcode >> 1) & 0x7FF);
-
-    if (idcode_out)
-        *idcode_out = idcode;
-
-    return Err::success;
-}
-
 static Error run_experiment(SWDDriver & swd)
 {
     Error check_error = Err::success;
@@ -441,7 +424,6 @@ static Error run_experiment(SWDDriver & swd)
     Target target(swd, dap, 0);
 
     Check(swd.initialize());
-    Check(read_idcode(swd, NULL));
 
     // Set up the initial DAP configuration while the target is in reset.
     // The STM32 wants us to do this, and the others don't seem to mind.

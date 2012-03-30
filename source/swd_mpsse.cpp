@@ -266,12 +266,28 @@ MPSSESWDDriver::MPSSESWDDriver(MPSSEConfig const & config,
 {
 }
 /******************************************************************************/
-Error MPSSESWDDriver::initialize()
+Error MPSSESWDDriver::initialize(uint32_t * idcode_out)
 {
     debug(3, "MPSSESWDDriver::initialize");
 
     Check(mpsse_setup(_config, _ftdi, 1000000));
     Check(swd_reset(_config, _ftdi));
+
+    /*
+     * Check the ADIv5 spec before altering the code below.  This may seem out
+     * of place, but the read of IDCODE is *required* during SWD initialization.
+     */
+
+    uint32_t idcode;
+    Check(read(DebugAccessPort::kRegIDCODE, true, &idcode));
+
+    debug(4, "Debug Port IDCODE = %08X", idcode);
+    debug(5, "Version:  %X", idcode >> 28);
+    debug(5, "Part:     %X", (idcode >> 12) & 0xFFFF);
+    debug(5, "Designer: %X", (idcode >> 1) & 0x7FF);
+
+    if (idcode_out)
+        *idcode_out = idcode;
 
     return Err::success;
 }

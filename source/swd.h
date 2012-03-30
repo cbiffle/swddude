@@ -41,7 +41,12 @@ public:
 
   /*
    * Initialize the SWD link to the target, per the "Connection and line reset
-   * sequence" defined by the ARM ADI v5.
+   * sequence" defined by the ARM ADI v5.  This has two parts:
+   *   1. 50 clocks with the SWDIO line held high by the master.
+   *   2. A read of the IDCODE register in the DP.
+   *
+   * Because this function reads IDCODE behind the scenes, it can optionally
+   * return it to the application through the pointer argument.
    *
    * If this function returns successfully, it indicates that the interface is
    * functioning, and that an attached microprocessor has responded to us.  The
@@ -52,7 +57,7 @@ public:
    *  Err::success - initialization complete, target responded, IDCODE valid.
    *  Err::failure - initialization failed or target failed to respond.
    */
-  virtual Err::Error initialize() = 0;
+  virtual Err::Error initialize(uint32_t * idcode_out = 0) = 0;
 
   /*
    * Asserts the target's reset line continuously until a call to leave_reset.
