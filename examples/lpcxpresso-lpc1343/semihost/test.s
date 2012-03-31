@@ -40,8 +40,8 @@ _start:
     str r6, [r4]            @ Turn off LED.
     bl delay                @ Wait
 
-    movs r0, #65            @ 'A'
-    bl semihost_putc
+    ldr r0, =output_message
+    bl semihost_puts
 
     b 1b                    @ Repeat ad nauseum.
 
@@ -66,16 +66,39 @@ delay:
 
     bx lr                   @ Return!
 
+@ semihost_puts
+@ Prints a null-terminated string to a debugger using semi-hosting.
+@
+@ Inputs:
+@  r0 - address of first character to print.
+@ Outputs: none
+@ Clobbers: r0, r1
+.thumb_func
+semihost_puts:
+    push {r4, lr}           @ Store volatile state.
+    movs r4, r0             @ Copy string address into r4.
+
+1:  ldrb r0, [r4], #1       @ Load byte and advance pointer.
+    cbz r0, 2f              @ Escape if byte is zero.
+    bl semihost_putc        @ Print byte.
+    b 1b
+
+2:  pop {r4, pc}            @ Restore and return.
+
 @ semihost_putc
 @ Prints a character to a debugger using semi-hosting.
 @
 @ Inputs:
 @  r0 - character to print.
 @ Outputs: none
-@ Clobbers:
+@ Clobbers: r0, r1
 .thumb_func
 semihost_putc:
     movs r1, r0             @ Move character out of the way.
     movs r0, #0x3           @ Set operation to SYS_WRITEC.
     bkpt 0xAB               @ Go!
     bx lr                   @ Return.
+
+.section .rodata
+output_message:
+    .asciz "Hello Semi-Hosted World!\n"

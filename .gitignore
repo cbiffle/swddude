@@ -9,3 +9,6 @@
 release/
 debug/
 profile/
+*.o
+*.elf
+*.bin
