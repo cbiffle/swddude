@@ -41,7 +41,6 @@
 #include <ftdi.h>
 
 using Err::Error;
-using Err::error_stack_print;
 
 using namespace Log;
 using namespace ARM;
@@ -88,8 +87,8 @@ static Error dump_flash(Target & target, unsigned n)
 /******************************************************************************/
 static Error run_experiment(ftdi_context & ftdi)
 {
-    MPSSESWDDriver swd(&ftdi);
-    Check(swd.initialize());
+    MPSSESWDDriver swd(um232h_config, &ftdi);
+    Check(swd.initialize(NULL));
     Check(swd.enter_reset());
     usleep(100000);
     Check(swd.leave_reset());
@@ -157,7 +156,7 @@ int main(int argc, char const ** argv)
     return 0;
 
   failure:
-    error_stack_print();
+    Err::stack()->print();
     return 1;
 }
 /******************************************************************************/
