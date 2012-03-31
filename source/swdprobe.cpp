@@ -87,6 +87,22 @@ struct TargetInfo
     bool mem_ap_found;
     uint8_t mem_ap_index;
 
+    enum arch_t
+    {
+        arch_undetermined = 0,
+        arch_v6m = 1,
+        arch_v7m = 2,
+    };
+    arch_t arch;
+
+    enum cpu_t
+    {
+        cpu_undetermined = 0,
+        cpu_cortex_m0 = 1,
+        cpu_cortex_m3 = 2,
+    };
+    cpu_t cpu;
+
     TargetInfo() :
         mem_ap_found(false),
         mem_ap_index(0) {}
@@ -97,6 +113,223 @@ Error probe_unknown_device(Target &           target,
                            TargetInfo *       info);
 
 /*******************************************************************************
+ * Heuristically identifies the CPU and architecture revision.
+ */
+Error identify_cpu(Target & target, TargetInfo *info)
+{
+    if (info->arch != TargetInfo::arch_undetermined
+        && info->cpu != TargetInfo::cpu_undetermined)
+    {
+        return Err::success;
+    }
+
+    rptr_const<word_t> cpuid_addr(0xE000ED00);
+
+    word_t cpuid;
+    CheckRetry(target.read_word(cpuid_addr, &cpuid), 100);
+
+    uint8_t  implementer = (cpuid >> 24) & 0x0FF;
+    uint8_t  variant     = (cpuid >> 20) & 0x00F;
+    uint8_t  arch_rev    = (cpuid >> 16) & 0x00F;
+    uint16_t partno      = (cpuid >>  4) & 0xFFF;
+    uint8_t  rev         = (cpuid >>  0) & 0x00F;
+
+    if (implementer == 0x41
+            && arch_rev == 0xC
+            && partno == 0xC20)
+    {
+        info->arch = TargetInfo::arch_v6m;
+        info->cpu = TargetInfo::cpu_cortex_m0;
+    }
+    else if (implementer == 0x41
+            && arch_rev == 0xF
+            && partno == 0xC23)
+    {
+        info->arch = TargetInfo::arch_v7m;
+        info->cpu = TargetInfo::cpu_cortex_m3;
+    }
+    else
+    {
+        notice("Unrecognized CPUID info; heuristic detection failed.");
+    }
+    
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores the ARMv7M Instrumentation Trace Macrocell.
+ */
+Error probe_v7m_itm(Target &           target,
+                    rptr_const<word_t> base,
+                    rptr_const<word_t> regfile,
+                    size_t             size_in_bytes,
+                    TargetInfo *       info)
+{
+    notice("  Component is ARMv7M ITM");
+
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores the ARMv7M Embedded Trace Macrocell.
+ */
+Error probe_v7m_etm(Target &           target,
+                    rptr_const<word_t> base,
+                    rptr_const<word_t> regfile,
+                    size_t             size_in_bytes,
+                    TargetInfo *       info)
+{
+    notice("  Component is ARMv7M ETM");
+
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores the ARMv7M Trace Port Interface Unit.
+ */
+Error probe_v7m_tpiu(Target &           target,
+                     rptr_const<word_t> base,
+                     rptr_const<word_t> regfile,
+                     size_t             size_in_bytes,
+                     TargetInfo *       info)
+{
+    notice("  Component is ARMv7M TPIU");
+
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores the ARMv6M BreakPoint Unit and the ARMv7M Flash Patch and
+ * Breakpoint unit.
+ */
+Error probe_bpu_fpb(Target &           target,
+                    rptr_const<word_t> base,
+                    rptr_const<word_t> regfile,
+                    size_t             size_in_bytes,
+                    TargetInfo *       info)
+{
+    notice("  Component is %s",
+           info->arch == TargetInfo::arch_v7m ? "ARMv7M FPB"
+                                                 : "ARMv6M BPU");
+
+    word_t ctrl;
+    Check(target.read_word(BPU::BP_CTRL, &ctrl));
+
+    /*
+     * Reassemble the number of code comparators (i.e. breakpoints).
+     */
+    unsigned code_count = BPU::BP_CTRL_NUM_CODE.extract(ctrl);
+    if (info->arch == TargetInfo::arch_v7m)
+    {
+        unsigned high_bits = BPU::BP_CTRL_NUM_CODE2.extract(ctrl);
+        code_count |= high_bits << 4;
+    }
+
+    notice("  Breakpoint count: %u", code_count);
+
+    /*
+     * ARMv7M uses a Harvard architecture internally, so it can distinguish
+     * Flash fetches on the "I-Code" bus (breakpoints) from Flash fetches on the
+     * "D-Code" bus (literals stored in the text).
+     */
+    unsigned literal_count = BPU::BP_CTRL_NUM_LIT.extract(ctrl);
+    notice("  Literal watchpoint count: %u", literal_count);
+
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores the ARMv6M/v7M Data Watchpoint and Trace unit.
+ */
+Error probe_v6m_v7m_dwt(Target &           target,
+                        rptr_const<word_t> base,
+                        rptr_const<word_t> regfile,
+                        size_t             size_in_bytes,
+                        TargetInfo *       info)
+{
+    notice("  Component is ARMv%dM DWT",
+           info->arch == TargetInfo::arch_v7m ? 7 : 6);
+
+    word_t ctrl;
+    Check(target.read_word(DWT::DWT_CTRL, &ctrl));
+
+    notice("  DWT comparator count   : %u",
+           DWT::DWT_CTRL_NUMCOMP.extract(ctrl));
+
+    if (info->arch == TargetInfo::arch_v7m)
+    {
+        notice("  Tracing/sampling       : %s",
+               (ctrl & DWT::DWT_CTRL_NOTRCPKT)  ? "Unsupported" : "Supported");
+        notice("  External match signals : %s",
+               (ctrl & DWT::DWT_CTRL_NOEXTTRIG) ? "Unsupported" : "Supported");
+        notice("  Cycle counter          : %s",
+               (ctrl & DWT::DWT_CTRL_NOCYCCNT)  ? "Unsupported" : "Supported");
+        notice("  Profiling counters     : %s",
+               (ctrl & DWT::DWT_CTRL_NOPRFCNT)  ? "Unsupported" : "Supported");
+    }
+
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores the ARMv6M/v7M System Control Space, turning on power to other
+ * devices so that enumeration can proceed.
+ */
+Error probe_v6m_v7m_scs(Target &           target,
+                        rptr_const<word_t> base,
+                        rptr_const<word_t> regfile,
+                        size_t             size_in_bytes,
+                        TargetInfo *       info)
+{
+    notice("  Component is ARMv%dM SCS",
+           info->arch == TargetInfo::arch_v7m ? 7 : 6);
+
+    // Enable DWT/ITM.
+    word_t demcr;
+    Check(target.read_word(DCB::DEMCR, &demcr));
+    Check(target.write_word(DCB::DEMCR, demcr | DCB::DEMCR_DWTENA));
+
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores a "Debug Component" heuristically.
+ */
+Error probe_debug_component(Target &           target,
+                            rptr_const<word_t> base,
+                            rptr_const<word_t> regfile,
+                            size_t             size_in_bytes,
+                            TargetInfo *       info)
+{
+    debug(1, "Applying heuristics to debug component at %08X", regfile.bits());
+
+    Check(identify_cpu(target, info));
+
+    if (info->arch == TargetInfo::arch_v7m)
+    {
+        switch (regfile.bits())
+        {
+            case 0xE0040000:
+                return probe_v7m_tpiu(target,
+                                      base,
+                                      regfile,
+                                      size_in_bytes,
+                                      info);
+
+            case 0xE0041000:
+                return probe_v7m_etm(target,
+                                     base,
+                                     regfile,
+                                     size_in_bytes,
+                                     info);
+        }
+    }
+
+    notice("Heuristic detection failed, component unknown.");
+
+    return Err::success;
+}
+/*******************************************************************************
  * Explores a "Generic IP Component" heuristically.
  */
 Error probe_generic_component(Target &           target,
@@ -105,7 +338,54 @@ Error probe_generic_component(Target &           target,
                               size_t             size_in_bytes,
                               TargetInfo *       info)
 {
-    notice("Unknown 'Generic IP Component' at %08X", regfile.bits());
+    debug(1, "Applying heuristics to component at %08X", regfile.bits());
+
+    Check(identify_cpu(target, info));
+
+    if (info->arch == TargetInfo::arch_v7m
+        || info->arch == TargetInfo::arch_v6m)
+    {
+        switch (regfile.bits())
+        {
+            case 0xE000E000:
+                return probe_v6m_v7m_scs(target,
+                                         base,
+                                         regfile,
+                                         size_in_bytes,
+                                         info);
+
+            case 0xE0001000:
+                return probe_v6m_v7m_dwt(target,
+                                         base,
+                                         regfile,
+                                         size_in_bytes,
+                                         info);
+
+            case 0xE0002000:
+                return probe_bpu_fpb(target,
+                                     base,
+                                     regfile,
+                                     size_in_bytes,
+                                     info);
+        }
+
+    }
+
+    if (info->arch == TargetInfo::arch_v7m)
+    {
+        switch (regfile.bits())
+        {
+            case 0xE0000000:
+                return probe_v7m_itm(target,
+                                     base,
+                                     regfile,
+                                     size_in_bytes,
+                                     info);
+        }
+    }
+
+    notice("Heuristic detection failed, component unknown.");
+
     return Err::success;
 }
 
@@ -228,6 +508,14 @@ Error probe_unknown_device(Target &           target,
                                           regfile,
                                           size_in_bytes,
                                           info));
+            break;
+
+        case 0x9:
+            Check(probe_debug_component(target,
+                                        base,
+                                        regfile,
+                                        size_in_bytes,
+                                        info));
             break;
 
         default:
