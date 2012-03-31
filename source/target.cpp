@@ -96,7 +96,7 @@ Target::Target(SWDDriver & swd, DebugAccessPort & dap, uint8_t mem_ap_index) :
     _dap(dap),
     _mem_ap_index(mem_ap_index) {}
 
-Error Target::initialize()
+Error Target::initialize(bool enable_debugging)
 {
     // We only use one AP.  Go ahead and select it and configure CSW.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
@@ -105,14 +105,16 @@ Error Target::initialize()
     csw = (csw & MEM_AP::CSW_RESERVED_mask) | MEM_AP::CSW_SIZE_4;
     Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
-    // Enable debugging.
-    word_t dhcsr;
-    Check(peek32(DCB::DHCSR, &dhcsr));
-    if ((dhcsr & (1 << 0)) == 0)
+    if (enable_debugging)
     {
-        Check(poke32(DCB::DHCSR, (dhcsr & DCB::DHCSR_update_mask)
-                    | DCB::DHCSR_DBGKEY
-                    | DCB::DHCSR_C_DEBUGEN));
+        word_t dhcsr;
+        Check(peek32(DCB::DHCSR, &dhcsr));
+        if ((dhcsr & (1 << 0)) == 0)
+        {
+            Check(poke32(DCB::DHCSR, (dhcsr & DCB::DHCSR_update_mask)
+                                            | DCB::DHCSR_DBGKEY
+                                            | DCB::DHCSR_C_DEBUGEN));
+        }
     }
 
     return Err::success;
@@ -127,6 +129,11 @@ Error Target::read_words(rptr_const<word_t> target_addr,
                          word_t * host_buffer,
                          size_t count)
 {
+    debug(2, "read_words(%08X, %p, %zu)",
+          target_addr.bits(),
+          host_buffer,
+          count);
+
     // Configure MEM-AP for auto-incrementing 32-bit transactions.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
     word_t csw;

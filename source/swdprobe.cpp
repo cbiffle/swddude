@@ -30,9 +30,16 @@
 #include "swd_mpsse.h"
 #include "swd.h"
 
+#include "rptr.h"
+
+#include "armv6m_v7m.h"
+#include "arm.h"
+
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
 #include "libs/command_line/command_line.h"
+
+#include <vector>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -40,6 +47,11 @@
 
 using namespace Log;
 using Err::Error;
+
+using namespace ARM;
+using namespace ARMv6M_v7M;
+
+using std::vector;
 
 
 /*******************************************************************************
@@ -70,17 +82,248 @@ namespace CommandLine
     };
 }
 
+struct TargetInfo
+{
+    bool mem_ap_found;
+    uint8_t mem_ap_index;
+
+    TargetInfo() :
+        mem_ap_found(false),
+        mem_ap_index(0) {}
+};
+
+Error probe_unknown_device(Target &           target,
+                           rptr_const<word_t> regfile,
+                           TargetInfo *       info);
+
+/*******************************************************************************
+ * Explores a "Generic IP Component" heuristically.
+ */
+Error probe_generic_component(Target &           target,
+                              rptr_const<word_t> base,
+                              rptr_const<word_t> regfile,
+                              size_t             size_in_bytes,
+                              TargetInfo *       info)
+{
+    notice("Unknown 'Generic IP Component' at %08X", regfile.bits());
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores a ROM table, descending to its devices.
+ */
+Error probe_rom_table(Target &           target,
+                      rptr_const<word_t> base,
+                      rptr_const<word_t> regfile,
+                      size_t             size_in_bytes,
+                      TargetInfo *       info)
+{
+    notice("  Device is ROM table: %zu bytes", size_in_bytes);
+
+    if (size_in_bytes != 4096)
+    {
+        warning("ROM Tables in ADIv5 are always 4096 bytes!  What is this?");
+        return Err::success;
+    }
+
+    unsigned const memtype_index = 0xFCC / sizeof(word_t);
+    word_t         memtype;
+    CheckRetry(target.read_word(base + memtype_index, &memtype), 100);
+
+    if ((memtype & 1) != 1)
+    {
+        warning("MEM-AP contains only debug support, no memory!  "
+                "(swdprobe does not understand this.)");
+        return Err::success;
+    }
+
+
+    // ADIv5 says offsets starting at 0xFCB are reserved.
+    unsigned const max_rom_table_entries = 0xFCB / sizeof(word_t);
+    vector<int32_t> entry_offsets;
+
+    for (unsigned i = 0; i < max_rom_table_entries; ++i)
+    {
+        word_t entry;
+        CheckRetry(target.read_word(base + i, &entry), 100);
+
+        if (entry == 0) break;
+
+        if ((entry & (1 << 1)) == 0)
+        {
+            warning("Found 8-bit ROM table: not supported by swdprobe!");
+            return Err::success;
+        }
+
+        if (entry & 1)  // Present?
+        {
+            debug(2, "Table entry %u = %08X", i, entry);
+            entry_offsets.push_back(entry & ~0xFFF);
+        }
+    }
+
+    for (vector<int32_t>::iterator it = entry_offsets.begin();
+         it != entry_offsets.end();
+         ++it)
+    {
+        rptr_const<word_t> child_regfile(base + (*it / sizeof(word_t)));
+        Check(probe_unknown_device(target, child_regfile, info));
+    }
+
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores a peripheral or ROM table through a MEM-AP.
+ */
+
+Error probe_unknown_device(Target &           target,
+                           rptr_const<word_t> regfile,
+                           TargetInfo *       info)
+{
+    notice("Device @%08X", regfile.bits());
+
+    word_t component_id[4];
+
+    unsigned const component_id_index = 0xFF0 / sizeof(word_t);
+
+    CheckRetry(target.read_words(regfile + component_id_index,
+                                 component_id,
+                                 4),
+               100);
+
+    if (component_id[0] != 0x0D
+        || component_id[2] != 0x05
+        || component_id[3] != 0xB1)
+    {
+        warning("Unexpected component ID preamble; legacy peripheral at %08X?",
+                regfile.bits());
+        return Err::success;
+    }
+
+    unsigned const peripheral_id4_index = 0xFD0 / sizeof(word_t);
+
+    word_t peripheral_id4;
+    CheckRetry(target.read_word(regfile + peripheral_id4_index,
+                                &peripheral_id4),
+               100);
+
+    unsigned log2_size_in_blocks = (peripheral_id4 >> 4) & 0xF;
+    unsigned size_in_blocks = 1 << log2_size_in_blocks;
+    unsigned size_in_bytes = 4096 * size_in_blocks;
+
+    rptr_const<word_t> base(regfile - (size_in_bytes / sizeof(word_t))
+                                    + (4096 / sizeof(word_t)));
+
+    uint8_t component_class = (component_id[1] >> 4) & 0xF;
+    switch (component_class)
+    {
+        case 0x1:
+            Check(probe_rom_table(target, base, regfile, size_in_bytes, info));
+            break;
+
+        case 0xE:
+            Check(probe_generic_component(target,
+                                          base,
+                                          regfile,
+                                          size_in_bytes,
+                                          info));
+            break;
+
+        default:
+            notice("  Unknown component class %X", component_class);
+            break;
+    }
+    
+    return Err::success;
+}
+
+/*******************************************************************************
+ * Explores a MEM-AP.
+ */
+
+Error probe_mem_ap(SWDDriver &       swd,
+                   DebugAccessPort & dap,
+                   uint8_t           ap_index,
+                   TargetInfo *      info)
+{
+    word_t csw;
+    Check(dap.start_read_ap(ap_index, 0x00));
+    Check(dap.read_rdbuff(&csw));
+    debug(1, "CSW = %08X", csw);
+
+    word_t cfg;
+    Check(dap.start_read_ap(ap_index, 0xF4));
+    Check(dap.read_rdbuff(&cfg));
+    debug(1, "CFG = %08X", cfg);
+
+    word_t base;
+    Check(dap.start_read_ap(ap_index, 0xF8));
+    Check(dap.read_rdbuff(&base));
+    debug(1, "BASE = %08X", base);
+
+    if ((base & 0x3) != 0x3)
+    {
+        warning("MEM-AP #%u uses pre-ADIv5 legacy interface; skipping!",
+                ap_index);
+    }
+    else
+    {
+        // Invasively reconfigure this MEM-AP.
+        Target target(swd, dap, ap_index);
+        rptr_const<word_t> regfile(base & ~0xFFF);
+
+        Check(target.initialize(false));
+
+        // Treat this peripheral as "unknown" to use type dispatching.
+        Check(probe_unknown_device(target, regfile, info));
+    }
+
+    return Err::success;
+}
+
 /*******************************************************************************
  * Performs the initial probe and sanity checks, while target reset is asserted.
  */
 
-struct TargetInfo
+Error early_probe_dap(SWDDriver & swd, DebugAccessPort & dap, TargetInfo * info)
 {
-    // To be filled in shortly.
-};
+    notice("Scanning for connected Access Ports...");
 
-Error early_probe_dap(DebugAccessPort & dap, TargetInfo * info)
-{
+    for (unsigned i = 0; i < 1/*256*/; ++i)
+    {
+        debug(2, "Trying Access Port #%u", i);
+
+        uint32_t ap_idr;
+        CheckRetry(dap.start_read_ap(i, 0xFC), 100);
+        Check(dap.read_rdbuff(&ap_idr));
+
+        if (ap_idr)
+        {
+            notice("Access Port #%u: IDR = %08X", i, ap_idr);
+            if (ap_idr & (1 << 16))  // Describes itself as a MEM-AP
+            {
+                if (info->mem_ap_found)
+                {
+                    warning("This system has two MEM-APs.  swdprobe doesn't "
+                            "handle this well.  Ignoring it!");
+                }
+                else
+                {
+                    notice("  Found MEM-AP.");
+                    info->mem_ap_found = true;
+                    info->mem_ap_index = i;
+                }
+
+                Check(probe_mem_ap(swd, dap, i, info));
+            }
+        }
+        else
+        {
+            debug(2, "Access Port #%u not implemented (IDR=0)", i);
+        }
+    }
+
     return Err::success;
 }
 
@@ -93,13 +336,20 @@ Error probe_main(SWDDriver & swd)
     DebugAccessPort dap(swd);
     TargetInfo      info;
 
-    Check(swd.initialize());
+    uint32_t idcode;
+    Check(swd.initialize(&idcode));
+
+    notice("SWD communications initialized successfully.");
+    notice("SWD-DP IDCODE = %08X", idcode);
+    notice("  Version:   %X", idcode >> 28);
+    notice("  Part:      %X", (idcode >> 12) & 0xFFFF);
+    notice("  Designer:  %X", (idcode >> 1) & 0x7FF);
 
     Check(swd.enter_reset());
     usleep(10000);
     Check(dap.reset_state());
 
-    Check(early_probe_dap(dap, &info));
+    Check(early_probe_dap(swd, dap, &info));
 
     Check(swd.leave_reset());
 

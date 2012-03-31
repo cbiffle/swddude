@@ -89,6 +89,13 @@ public:
     }
 
     inline self operator++() const { return *this + 1; }
+
+    inline self operator-(int d) const
+    {
+        return self(_bits - d * sizeof(type));
+    }
+
+    inline self operator--() const { return *this - 1; }
 };
 
 

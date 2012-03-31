@@ -54,7 +54,7 @@ public:
      *
      * TODO: currently it incompletely resets debug state.
      */
-    Err::Error initialize();
+    Err::Error initialize(bool enable_debugging = true);
 
     /*
      * Reads some number of 32-bit words from the target into memory on the
