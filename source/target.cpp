@@ -335,7 +335,7 @@ Error Target::get_breakpoint_count(size_t * n)
     word_t ctrl;
     Check(peek32(BPU::BP_CTRL, &ctrl));
 
-    *n = (ctrl & BPU::BP_CTRL_NUM_CODE_mask) >> BPU::BP_CTRL_NUM_CODE_pos;
+    *n = BPU::BP_CTRL_NUM_CODE.extract(ctrl);
 
     return Err::success;
 }

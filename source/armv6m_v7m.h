@@ -12,6 +12,7 @@
 
 #include "arm.h"
 #include "rptr.h"
+#include "bitfield.h"
 
 #include <stdint.h>
 
@@ -69,13 +70,18 @@ namespace DCB
 namespace BPU
 {
     static rptr<ARM::word_t> const BP_CTRL(0xE0002000);
-    static ARM::word_t const BP_CTRL_KEY    = 1 << 1;
-    static ARM::word_t const BP_CTRL_ENABLE = 1 << 0;
-    static ARM::word_t const BP_CTRL_NUM_CODE_pos = 4;
-    static ARM::word_t const BP_CTRL_NUM_CODE_mask =
-        0x7 << BP_CTRL_NUM_CODE_pos;
+    static ARM::word_t    const BP_CTRL_KEY    = 1 << 1;
+    static ARM::word_t    const BP_CTRL_ENABLE = 1 << 0;
+    static Bitfield<7, 4> const BP_CTRL_NUM_CODE;
 
-    // Architeturally, there can be up to 8 breakpoints.  This is the first.
+    // ARMv7M extension
+    static Bitfield<14, 12> const BP_CTRL_NUM_CODE2;
+    static Bitfield<11,  8> const BP_CTRL_NUM_LIT;
+
+    /*
+     * ARMv6M can have up to 16 breakpoints.  ARMv7M can have 128.  Either way,
+     * this register is the first.
+     */
     static rptr<ARM::word_t> const BP_COMP0(0xE0002008);
 
     static ARM::word_t const BP_COMPx_MATCH_NONE = 0 << 30;
@@ -87,6 +93,20 @@ namespace BPU
 
     static ARM::word_t const BP_COMPx_ENABLE = 1 << 0;
 }
+
+/*******************************************************************************
+ * The Data Watchpoint and Trace unit (ARMv6-M).  Compatible with ARMv7-M.
+ */
+namespace DWT
+{
+    static rptr<ARM::word_t> const DWT_CTRL(0xE0001000);
+    static Bitfield<31, 28> const DWT_CTRL_NUMCOMP;
+    static ARM::word_t      const DWT_CTRL_NOTRCPKT  = 1 << 27;
+    static ARM::word_t      const DWT_CTRL_NOEXTTRIG = 1 << 26;
+    static ARM::word_t      const DWT_CTRL_NOCYCCNT  = 1 << 25;
+    static ARM::word_t      const DWT_CTRL_NOPRFCNT  = 1 << 24;
+}
+
 
 }  // namespace ARMv6M_v7M
 
