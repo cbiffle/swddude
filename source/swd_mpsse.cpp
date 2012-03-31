@@ -59,7 +59,7 @@ uint8_t const swd_header_parity = 1 << 5;
 uint8_t const swd_header_park   = 1 << 7;
 
 /******************************************************************************/
-uint8 swd_request(int address, bool debug_port, bool write)
+uint8_t swd_request(int address, bool debug_port, bool write)
 {
     bool        parity  = debug_port ^ write;
     uint8_t     request = (swd_header_start |

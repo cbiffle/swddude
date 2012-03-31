@@ -78,7 +78,7 @@ namespace CommandLine
         &vid,
         &pid,
         &interface,
-        null
+        NULL
     };
 }
 
