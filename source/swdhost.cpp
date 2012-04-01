@@ -44,6 +44,8 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <ftdi.h>
+#include <termios.h>
+#include <signal.h>
 
 using namespace Log;
 using Err::Error;
@@ -71,6 +73,9 @@ namespace CommandLine
     static Scalar<int>
     interface("interface", true, 0, "Interface on FTDI chip");
 
+    static Scalar<bool>
+    local_echo("local-echo", true, false, "Whether to echo keystrokes");
+
     static Argument * arguments[] =
     {
         &debug,
@@ -78,6 +83,7 @@ namespace CommandLine
         &vid,
         &pid,
         &interface,
+        &local_echo,
         NULL
     };
 }
@@ -87,6 +93,7 @@ namespace CommandLine
  */
 Error write_char(Target & target, word_t parameter)
 {
+    debug(2, "SYS_WRITEC %02X", parameter);
     putchar(parameter);
     fflush(stdout);
     return Err::success;
@@ -97,6 +104,7 @@ Error write_char(Target & target, word_t parameter)
  */
 Error write_str(Target & target, word_t parameter)
 {
+    debug(2, "SYS_WRITE0 %08X", parameter);
     /*
      * This is a byte string, but the target only supports 32-bit accesses.
      * So, we have to jump through some hoops to transfer it.
@@ -128,6 +136,24 @@ end_of_string:
     fflush(stdout);
     return Err::success;
 }
+
+/*******************************************************************************
+ * Implements the semihosting SYS_READC operation.
+ */
+Error read_char(Target & target, word_t parameter)
+{
+    debug(2, "SYS_READC");
+    /*
+     * Note: the SYS_READC operation defines no standard way of handling EOF!
+     * We just pass it to the target.
+     */
+
+    int c = getchar();
+    Check(target.write_register(Register::R0, c));
+
+    return Err::success;
+}
+
 
 /*******************************************************************************
  * Inspects the CPU's halt conditions to see whether semihosting has been
@@ -182,6 +208,10 @@ Error handle_halt(Target & target)
                     Check(write_str(target, parameter));
                     break;
 
+                case 0x7:
+                    Check(read_char(target, parameter));
+                    break;
+
                 default:
                     warning("Unsupported semihosting operation 0x%X",
                             operation);
@@ -215,8 +245,47 @@ Error handle_halt(Target & target)
 /*******************************************************************************
  * Semihosting tool entry point.
  */
+static termios stored_settings;
+static struct sigaction previous_signal;
+
+static void restore_terminal()
+{
+    tcsetattr(0, TCSANOW, &stored_settings);
+}
+
+static void int_handler(int signal)
+{
+    restore_terminal();
+    fflush(stdout);
+    exit(1);
+}
+
 Error host_main(SWDDriver & swd)
 {
+    /*
+     * Hook SIGINT to ensure that we can restore terminal settings on ^C.
+     */
+    struct sigaction action;
+    action.sa_handler = int_handler;
+    action.sa_flags   = SA_RESETHAND;
+
+    CheckP(sigemptyset(&action.sa_mask));
+    CheckP(sigaction(SIGINT, &action, &previous_signal));
+
+    /*
+     * Make stdin unbuffered and disable echo.
+     */
+    tcgetattr(0, &stored_settings);
+
+    termios unbuffered = stored_settings;
+    unbuffered.c_lflag &= ~ICANON;
+    if (!CommandLine::local_echo.get()) unbuffered.c_lflag &= ~ECHO;
+
+    tcsetattr(0, TCSANOW, &unbuffered);
+
+    /*
+     * On with the semi-hosting!
+     */
     DebugAccessPort dap(swd);
     Target target(swd, dap, 0);
 
@@ -345,6 +414,7 @@ static Error error_main(int argc, char const * * argv)
     }
 
 host_failed:
+    restore_terminal();
     CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
 
 read_failed:
