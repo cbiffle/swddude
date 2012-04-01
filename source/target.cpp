@@ -58,31 +58,6 @@ Error Target::final_read_ap(word_t * data)
     return _dap.read_rdbuff(data);
 }
 
-Error Target::peek32(rptr_const<word_t> address, word_t * data)
-{
-    Check(write_ap(MEM_AP::TAR, address.bits()));
-    CheckRetry(start_read_ap(MEM_AP::DRW), 100);
-    CheckRetry(final_read_ap(data), 100);
-
-    return Err::success;
-}
-
-Error Target::poke32(rptr<word_t> address, word_t data)
-{
-    Check(write_ap(MEM_AP::TAR, address.bits()));
-    CheckRetry(write_ap(MEM_AP::DRW, data), 100);
-
-    // Block waiting for write to complete.
-    word_t csw = MEM_AP::CSW_TRINPROG;
-    while (csw & MEM_AP::CSW_TRINPROG)
-    {
-        CheckRetry(start_read_ap(MEM_AP::CSW), 100);
-        Check(final_read_ap(&csw));
-    }
-
-    return Err::success;
-}
-
 /*******************************************************************************
  * Target public methods: construction/initialization
  */
@@ -154,10 +129,14 @@ Error Target::read_words(rptr_const<word_t> target_addr,
     return Err::success;
 }
 
-Error Target::read_word(rptr_const<word_t> addr, word_t * data)
+Error Target::read_word(rptr_const<word_t> address, word_t * data)
 {
-    debug(3, "Target::read_word(%08X, %p)", addr.bits(), data);
-    return peek32(addr, data);
+    debug(3, "Target::read_word(%08X, %p)", address.bits(), data);
+    Check(write_ap(MEM_AP::TAR, address.bits()));
+    CheckRetry(start_read_ap(MEM_AP::DRW), 100);
+    CheckRetry(final_read_ap(data), 100);
+
+    return Err::success;
 }
 
 Error Target::write_words(word_t const * host_buffer,
@@ -189,10 +168,21 @@ Error Target::write_words(word_t const * host_buffer,
     return Err::success;
 }
 
-Error Target::write_word(rptr<word_t> addr, word_t data)
+Error Target::write_word(rptr<word_t> address, word_t data)
 {
-    debug(3, "Target::write_word(%08X, %08X)", addr.bits(), data);
-    return poke32(addr, data);
+    debug(3, "Target::write_word(%08X, %08X)", address.bits(), data);
+    Check(write_ap(MEM_AP::TAR, address.bits()));
+    CheckRetry(write_ap(MEM_AP::DRW, data), 100);
+
+    // Block waiting for write to complete.
+    word_t csw = MEM_AP::CSW_TRINPROG;
+    while (csw & MEM_AP::CSW_TRINPROG)
+    {
+        CheckRetry(start_read_ap(MEM_AP::CSW), 100);
+        Check(final_read_ap(&csw));
+    }
+
+    return Err::success;
 }
 
 

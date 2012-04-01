@@ -39,10 +39,6 @@ class Target
     Err::Error step_read_ap(uint8_t next_address, ARM::word_t * last_data);
     Err::Error final_read_ap(ARM::word_t * data);
 
-    // Implementation factors of read_word/write_word.  TODO: remove?
-    Err::Error peek32(rptr_const<ARM::word_t> address, ARM::word_t * data);
-    Err::Error poke32(rptr<ARM::word_t> address, ARM::word_t data);
-
 public:
     Target(SWDDriver &, DebugAccessPort &, uint8_t mem_ap_index);
 
