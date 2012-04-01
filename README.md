@@ -3,9 +3,8 @@ swddude
 
 *`swddude` is very young pre-alpha software.  Caveat downloader.*
 
-`swddude` is a simple program that can flash code onto ARM Cortex
-microcontrollers, such as the Cortex-M0 and M3, using SWD.  It's designed to use
-programming interfaces built on the FTDI FT232H interface chip.
+`swddude` is a collection of simple tools for programming and using ARM Cortex
+microcontrollers, such as the Cortex-M0 and M3, using the SWD protocol.
 
 
 Why?
@@ -24,18 +23,21 @@ wrote `swddude` to scratch this itch.
 What Can It Do?
 ---------------
 
-Out of the box, `swddude` can flash code onto the following chips:
+Currently:
 
- * NXP LPC11xx series (Cortex-M0 based).
- * NXP LPC13xx series (Cortex-M3 based).
+ * `swddude` itself can flash code onto the NXP LPC11xx (Cortex-M0 based) and
+   LPC13xx (Cortex-M3 based).
+ * `swdprobe` can interrogate a SWD-compatible chip and dump information about
+   what it finds.  This is useful when adding support for new chips to
+   `swddude`.
+ * `swdhost` provides semihosting I/O for an attached microcontroller.  With
+   semihosting, embedded software can send `printf`-style messages to a host
+   computer through the debug connection -- no UART required.
+ * `swddump` extracts the contents of Flash from a supported microcontroller.
 
-It may also work with other NXP Cortex parts that have similar memory maps and
-IAP invocation methods, such as the LPC17xx series.
-
-It was designed very specifically for this purpose, and extending it to other
-varieties of chips will require refactoring.  We're likely to do this in the
-near future, because we've got a box of LPC18xx, STM32F4, and EnergyMicro eval
-boards just begging to be used.
+We're working to extend the tools to support more microcontroller varieties.
+Specifically, we're focusing on microcontrollers without JTAG ports -- devices
+that can't be easily added to OpenOCD (yet).
 
 
 How Do I Use It?
@@ -49,10 +51,12 @@ lines of your microcontroller.
 
 Wire up your micro using the configuration described in `swd_mpsse.h`.
 
-Build a recent version of `libftdi`.  The version commonly included in package
-managers as of this writing (0.19) doesn't support the FT232H's MPSSE feature,
-which we use to convert it into a SWD interface.  For best results, build
-`libftdi` from HEAD.
+Install `libusb` 1.0 and the `libusb-compat` package.  The version supplied by
+your package manager (apt, Homebrew, etc.) should be fine.
+
+Build a recent version of `libftdi`.  As of this writing, you must build
+`libftdi` from HEAD -- the released version (0.20) still uses the legacy
+`libusb` 0.1 APIs and is incompatible with `swddude`.
 
 After checking out `swddude`, build it like so:
 
@@ -80,10 +84,16 @@ option.
 Status and Known Issues
 -----------------------
 
-`swddude` can flash the LPC1114 and LPC1343 on their respective LPCxpresso
-breakout boards, as long as the proprietary programming system (on the side of
-the board with the USB connector) has been disabled by cutting the bridge
-traces.
+These boards are known to work:
+
+ * LPCxpresso LPC1114.
+ * LPCxpresso LPC11C24.
+ * LPCxpresso LPC1343.
+
+Note that the LPCxpresso boards will only work if you disable the proprietary
+LPC-Link programming device on the board.  On newer boards, you can do this by
+clearing solder jumpers between the two sections of the board; older boards make
+you physically cut traces in the same position.
 
 Known issues:
 
@@ -107,4 +117,14 @@ The source code contains the following top-level directories:
  * `build`: Anton Staaf's build system.
  * `libs`: Anton Staaf's support libraries, several of which we use.  (We
    currently include more than we strictly need here.)
- * `source`: `swddude` itself.
+ * `source`: `swddude` and friends.
+
+The source tree uses git's submodule feature aggressively.  If you check out
+`swddude` using a simple `git clone`, you'll be left with empty directories that
+won't build.  You can fix this by running
+
+    git submodule update --recursive
+
+Alternatively, you can make this happen automatically when you clone, like so:
+
+    git clone --recursive ${git_url}
