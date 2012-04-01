@@ -41,6 +41,7 @@ namespace MEM_AP
 
     static uint32_t const CSW_TRINPROG = 1 << 7;
 
+    static uint32_t const CSW_ADDRINC_mask   = 3 << 4;
     static uint32_t const CSW_ADDRINC_OFF    = 0 << 4;
     static uint32_t const CSW_ADDRINC_SINGLE = 1 << 4;
     static uint32_t const CSW_ADDRINC_PACKED = 2 << 4;
@@ -77,6 +78,17 @@ Error Target::final_read_ap(word_t * data)
     return _dap.read_rdbuff(data);
 }
 
+Error Target::write_tar(rptr_const<word_t> address)
+{
+    if (_tar != rptr<word_t>(address.bits()))
+    {
+        CheckRetry(write_ap(MEM_AP::TAR, address.bits()), 100);
+        _tar = rptr<word_t>(address.bits());
+    }
+
+    return Err::success;
+}
+
 /*******************************************************************************
  * Target public methods: construction/initialization
  */
@@ -84,7 +96,8 @@ Error Target::final_read_ap(word_t * data)
 Target::Target(SWDDriver & swd, DebugAccessPort & dap, uint8_t mem_ap_index) :
     _swd(swd),
     _dap(dap),
-    _mem_ap_index(mem_ap_index) {}
+    _mem_ap_index(mem_ap_index),
+    _tar(0) {}
 
 Error Target::initialize(bool enable_debugging)
 {
@@ -95,7 +108,15 @@ Error Target::initialize(bool enable_debugging)
     word_t csw;
     Check(final_read_ap(&csw));
     csw = (csw & MEM_AP::CSW_RESERVED_mask) | MEM_AP::CSW_SIZE_4;
+    csw &= ~MEM_AP::CSW_ADDRINC_mask;
     Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
+
+    // Load the TAR contents so we can coalesce writes.
+    word_t tar_bits;
+    CheckRetry(start_read_ap(MEM_AP::TAR), 100);
+    CheckRetry(final_read_ap(&tar_bits), 100);
+
+    _tar = rptr<word_t>(tar_bits);
 
     if (enable_debugging)
     {
@@ -136,7 +157,7 @@ Error Target::read_words(rptr_const<word_t> target_addr,
     Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
     // Load Transfer Address Register with first address.
-    Check(write_ap(MEM_AP::TAR, target_addr.bits()));
+    Check(write_tar(target_addr));
 
     // Transfer using pipelined reads.
     CheckRetry(start_read_ap(MEM_AP::DRW), 100);
@@ -145,13 +166,20 @@ Error Target::read_words(rptr_const<word_t> target_addr,
         CheckRetry(step_read_ap(MEM_AP::DRW, &host_buffer[i]), 100);
     }
 
+    // Update cached TAR to reflect incrementing.
+    _tar = rptr<word_t>((target_addr + count).bits());
+
+    // Turn incrementing back off.
+    csw = csw & ~MEM_AP::CSW_ADDRINC_mask;
+    Check(write_ap(MEM_AP::CSW, csw));
+
     return Err::success;
 }
 
 Error Target::read_word(rptr_const<word_t> address, word_t * data)
 {
     debug(3, "Target::read_word(%08X, %p)", address.bits(), data);
-    Check(write_ap(MEM_AP::TAR, address.bits()));
+    Check(write_tar(address));
     CheckRetry(start_read_ap(MEM_AP::DRW), 100);
     CheckRetry(final_read_ap(data), 100);
 
@@ -177,12 +205,16 @@ Error Target::write_words(word_t const * host_buffer,
     Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
     // Load Transfer Address Register with first address.
-    Check(write_ap(MEM_AP::TAR, target_addr.bits()));
+    Check(write_tar(target_addr));
 
     for (size_t i = 0; i < count; ++i)
     {
         Check(write_ap(MEM_AP::DRW, host_buffer[i]));
     }
+
+    // Turn incrementing back off.
+    csw = csw & ~MEM_AP::CSW_ADDRINC_mask;
+    Check(write_ap(MEM_AP::CSW, csw));
 
     return Err::success;
 }
@@ -190,7 +222,7 @@ Error Target::write_words(word_t const * host_buffer,
 Error Target::write_word(rptr<word_t> address, word_t data)
 {
     debug(3, "Target::write_word(%08X, %08X)", address.bits(), data);
-    Check(write_ap(MEM_AP::TAR, address.bits()));
+    Check(write_tar(address));
     CheckRetry(write_ap(MEM_AP::DRW, data), 100);
 
     if (use_careful_memory_writes)

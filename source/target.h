@@ -27,6 +27,9 @@ class Target
     DebugAccessPort &_dap;  // DAP to wrap.
     uint8_t _mem_ap_index;  // Index of the sole AP used (a MEM-AP); often 0.
 
+    // State updated during use:
+    rptr<ARM::word_t> _tar;  // Contents of Transfer Address Register.
+
     // Writes data to a register in AP #0.
     Err::Error write_ap(uint8_t address, ARM::word_t data);
 
@@ -38,6 +41,9 @@ class Target
     Err::Error start_read_ap(uint8_t address);
     Err::Error step_read_ap(uint8_t next_address, ARM::word_t * last_data);
     Err::Error final_read_ap(ARM::word_t * data);
+
+    // Updates TAR to point to the desired location, if necessary.
+    Err::Error write_tar(rptr_const<ARM::word_t>);
 
 public:
     Target(SWDDriver &, DebugAccessPort &, uint8_t mem_ap_index);

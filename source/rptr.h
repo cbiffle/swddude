@@ -31,6 +31,11 @@ protected:
     explicit inline rptr_base(uint32_t bits) : _bits(bits) {}
 
 public:
+    inline self const & operator=(self const &other)
+    {
+        _bits = other._bits;
+    }
+
     inline uint32_t bits() const { return _bits; }
 
     inline size_t size() const { return sizeof(type); }
