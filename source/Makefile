@@ -31,6 +31,7 @@ products		:= swddude swdprobe swddump swdhost
 
 swddude[type]		:= program
 swddude[cpp_files]	:= swd_dp.cpp swd_mpsse.cpp target.cpp swddude.cpp
+swddude[cpp_files]	+= mpsse_config.cpp mpsse.cpp
 swddude[libs]		:= error:error
 swddude[libs]		+= log:log
 swddude[libs]		+= files:files
@@ -39,6 +40,7 @@ swddude[libs]		+= system/ftdi:ftdi
 
 swddump[type]		:= program
 swddump[cpp_files]	:= swd_dp.cpp swd_mpsse.cpp target.cpp swddump.cpp
+swddump[cpp_files]	+= mpsse_config.cpp mpsse.cpp
 swddump[libs]		:= error:error
 swddump[libs]		+= log:log
 swddump[libs]		+= command_line:command_line
@@ -46,6 +48,7 @@ swddump[libs]		+= system/ftdi:ftdi
 
 swdprobe[type]		:= program
 swdprobe[cpp_files]	:= swd_dp.cpp swd_mpsse.cpp target.cpp swdprobe.cpp
+swdprobe[cpp_files]	+= mpsse_config.cpp mpsse.cpp
 swdprobe[libs]		:= error:error
 swdprobe[libs]		+= log:log
 swdprobe[libs]		+= files:files
@@ -54,6 +57,7 @@ swdprobe[libs]		+= system/ftdi:ftdi
 
 swdhost[type]		:= program
 swdhost[cpp_files]	:= swd_dp.cpp swd_mpsse.cpp target.cpp swdhost.cpp
+swdhost[cpp_files]	+= mpsse_config.cpp mpsse.cpp
 swdhost[libs]		:= error:error
 swdhost[libs]		+= log:log
 swdhost[libs]		+= files:files

@@ -25,8 +25,8 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "swd_mpsse.h"
-#include "swd_dp.h"
+#include "source/swd_mpsse.h"
+#include "source/swd_dp.h"
 
 #include "libs/error/error_stack.h"
 #include "libs/log/log_default.h"
@@ -263,9 +263,9 @@ Error swd_response_to_error(uint8_t response)
 }
 /******************************************************************************/
 MPSSESWDDriver::MPSSESWDDriver(MPSSEConfig const & config,
-                               ftdi_context * ftdi) :
+                               MPSSE * mpsse) :
     _config(config),
-    _ftdi(ftdi)
+    _mpsse(mpsse)
 {
 }
 /******************************************************************************/
@@ -273,8 +273,8 @@ Error MPSSESWDDriver::initialize(uint32_t * idcode_out)
 {
     debug(4, "MPSSESWDDriver::initialize");
 
-    Check(mpsse_setup(_config, _ftdi, 10000000));
-    Check(swd_reset(_config, _ftdi));
+    Check(mpsse_setup(_config, _mpsse->ftdi(), 10000000));
+    Check(swd_reset(_config, _mpsse->ftdi()));
 
     /*
      * Check the ADIv5 spec before altering the code below.  This may seem out
@@ -309,7 +309,7 @@ Error MPSSESWDDriver::enter_reset()
 
     debug(4, "MPSSESWDDriver::enter_reset");
 
-    Check(mpsse_write(_ftdi, commands, sizeof(commands)));
+    Check(mpsse_write(_mpsse->ftdi(), commands, sizeof(commands)));
 
     return Err::success;
 }
@@ -328,7 +328,7 @@ Error MPSSESWDDriver::leave_reset()
 
     debug(4, "MPSSESWDDriver::leave_reset");
 
-    Check(mpsse_write(_ftdi, commands, sizeof(commands)));
+    Check(mpsse_write(_mpsse->ftdi(), commands, sizeof(commands)));
 
     return Err::success;
 }
@@ -337,7 +337,7 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
 {
     debug(4, "MPSSESWDDriver::read(%08X, %d)", address, debug_port);
 
-    uint8_t     request_commands[] =
+    uint8_t     request[] =
     {
         // Write SWD header
         MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
@@ -363,7 +363,7 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
         MPSSE_DO_READ | MPSSE_READ_NEG | MPSSE_LSB | MPSSE_BITMODE, FTL(2),
     };
 
-    uint8_t     cleanup_commands[] =
+    uint8_t     cleanup[] =
     {
         // Turn the bidirectional data line back to an output
         SET_BITS_LOW,
@@ -379,8 +379,8 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
     uint8_t     response[6] = {0};
 
     // response[0]: the three-bit response, MSB-justified.
-    Check(mpsse_write(_ftdi, request_commands, sizeof(request_commands)));
-    Check(mpsse_read(_ftdi, response, 1, 1000));
+    Check(mpsse_write(_mpsse->ftdi(), request, sizeof(request)));
+    Check(mpsse_read(_mpsse->ftdi(), response, 1, 1000));
 
     uint8_t     ack = response[0] >> 5;
 
@@ -394,8 +394,13 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
         // Read the data phase.
         // response[4:1]: the 32-bit response word.
         // response[5]: the parity bit in bit 6, turnaround (ignored) in bit 7.
-        Check(mpsse_write(_ftdi, data_commands, sizeof(data_commands)));
-        Check(mpsse_read(_ftdi, response + 1, sizeof(response) - 1, 1000));
+        Check(mpsse_write(_mpsse->ftdi(),
+                          data_commands,
+                          sizeof(data_commands)));
+        Check(mpsse_read(_mpsse->ftdi(),
+                         response + 1,
+                         sizeof(response) - 1,
+                         1000));
 
         temp = (response[1] <<  0 |
                 response[2] <<  8 |
@@ -412,15 +417,15 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
               address, debug_port, temp, ack);
     }
 
-    Check(mpsse_write(_ftdi, cleanup_commands, sizeof(cleanup_commands)));
+    Check(mpsse_write(_mpsse->ftdi(), cleanup, sizeof(cleanup)));
 
     return swd_response_to_error(ack);
 }
 /******************************************************************************/
 Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
 {
-    bool        parity             = swd_parity(data);
-    uint8_t     request_commands[] =
+    bool        parity    = swd_parity(data);
+    uint8_t     request[] =
     {
         // Write SWD header
         MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE, FTL(8),
@@ -465,15 +470,17 @@ Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
 
     uint8_t     response[1] = {0};
 
-    Check(mpsse_write(_ftdi, request_commands, sizeof(request_commands)));
-    Check(mpsse_read (_ftdi, response, sizeof(response), 1000));
+    Check(mpsse_write(_mpsse->ftdi(), request, sizeof(request)));
+    Check(mpsse_read (_mpsse->ftdi(), response, sizeof(response), 1000));
 
     uint8_t     ack = response[0] >> 5;
 
     debug(5, "SWD write got response %u", ack);
 
     if (ack == 0x01)
-        Check(mpsse_write(_ftdi, data_commands, sizeof(data_commands)));
+        Check(mpsse_write(_mpsse->ftdi(),
+                          data_commands,
+                          sizeof(data_commands)));
 
     return swd_response_to_error(ack);
 }

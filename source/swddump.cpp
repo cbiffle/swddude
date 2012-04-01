@@ -49,15 +49,38 @@ using namespace LPC11xx_13xx;
 /******************************************************************************/
 namespace CommandLine
 {
-    static Scalar<int> debug ("debug",  true,  0,
-                              "What level of debug logging to use.");
+    static Scalar<int>
+    debug ("debug",  true,  0,
+           "What level of debug logging to use.");
 
-    static Scalar<int> count("count", true, 32, "Words to dump");
+    static Scalar<int>
+    count("count", true, 32,
+          "Words to dump");
+
+    static Scalar<String>
+    programmer("programmer", true, "um232h",
+               "FTDI based programmer to use");
+
+    static Scalar<int>
+    vid("vid", true, 0,
+        "FTDI VID");
+
+    static Scalar<int>
+    pid("pid", true, 0,
+        "FTDI PID");
+
+    static Scalar<int>
+    interface("interface", true, 0,
+              "FTDI interface");
 
     static Argument * arguments[] =
     {
         &debug,
         &count,
+        &programmer,
+        &vid,
+        &pid,
+        &interface,
         NULL
     };
 }
@@ -85,9 +108,8 @@ static Error dump_flash(Target & target, unsigned n)
     return Err::success;
 }
 /******************************************************************************/
-static Error run_experiment(ftdi_context & ftdi)
+static Error run_experiment(SWDDriver & swd)
 {
-    MPSSESWDDriver swd(um232h_config, &ftdi);
     Check(swd.initialize(NULL));
     Check(swd.enter_reset());
     usleep(100000);
@@ -108,39 +130,27 @@ static Error run_experiment(ftdi_context & ftdi)
 /******************************************************************************/
 static Error error_main(int argc, char const ** argv)
 {
-    Error check_error = Err::success;
-    ftdi_context ftdi;
+    MPSSEConfig config;
+    MPSSE       mpsse;
 
-    CheckCleanupP(ftdi_init(&ftdi), init_failed);
+    Check(lookup_programmer(CommandLine::programmer.get(), &config));
 
-    CheckCleanupStringP(ftdi_usb_open(&ftdi, 0x0403, 0x6014), open_failed,
-                        "Unable to open FTDI device: %s",
-                        ftdi_get_error_string(&ftdi));
+    if (CommandLine::interface.set())
+        config.interface = CommandLine::interface.get();
 
-    CheckCleanupP(ftdi_usb_reset(&ftdi), reset_failed);
-    CheckCleanupP(ftdi_set_interface(&ftdi, INTERFACE_A), interface_failed);
+    if (CommandLine::vid.set())
+        config.vid = CommandLine::vid.get();
 
-    unsigned chipid;
-    CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
-    debug(1, "FTDI chipid: %X", chipid);
+    if (CommandLine::pid.set())
+        config.pid = CommandLine::pid.get();
 
-    CheckCleanup(run_experiment(ftdi), experiment_failed);
+    Check(mpsse.open(config));
 
-  experiment_failed:
-    CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
+    MPSSESWDDriver swd(config, &mpsse);
 
-  read_failed:
-  interface_failed:
-  reset_failed:
-    CheckStringP(ftdi_usb_close(&ftdi),
-                 "Unable to close FTDI device: %s",
-                 ftdi_get_error_string(&ftdi));
+    Check(run_experiment(swd));
 
-  open_failed:
-    ftdi_deinit(&ftdi);
-
-  init_failed:
-    return check_error;
+    return Err::success;
 }
 /******************************************************************************/
 int main(int argc, char const ** argv)

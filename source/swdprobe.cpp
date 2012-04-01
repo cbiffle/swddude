@@ -644,28 +644,6 @@ Error probe_main(SWDDriver & swd)
     return Err::success;
 }
 
-static struct {
-    char const * name;
-    MPSSEConfig const * config;
-} const programmer_table[] = {
-    { "um232h",      &um232h_config      },
-    { "bus_blaster", &bus_blaster_config },
-};
-
-static size_t const programmer_table_count =
-    sizeof(programmer_table) / sizeof(programmer_table[0]);
-
-static Error lookup_programmer(String name, MPSSEConfig const * * config) {
-    for (size_t i = 0; i < programmer_table_count; ++i) {
-        if (name.equal(programmer_table[i].name))
-        {
-            *config = programmer_table[i].config;
-            return Err::success;
-        }
-    }
-
-    return Err::failure;
-}
 
 /*******************************************************************************
  * Entry point (sort of -- see main below)
@@ -673,97 +651,27 @@ static Error lookup_programmer(String name, MPSSEConfig const * * config) {
 
 static Error error_main(int argc, char const * * argv)
 {
-    Error                  check_error = Err::success;
-    libusb_context *       libusb;
-    libusb_device_handle * handle;
-    libusb_device *        device;
-    ftdi_context           ftdi;
-    MPSSEConfig const *    config;
+    MPSSEConfig config;
+    MPSSE       mpsse;
 
     Check(lookup_programmer(CommandLine::programmer.get(), &config));
 
-    ftdi_interface interface = ftdi_interface(INTERFACE_A +
-                                              config->default_interface);
-    uint16_t       vid       = config->default_vid;
-    uint16_t       pid       = config->default_pid;
-
     if (CommandLine::interface.set())
-        interface = ftdi_interface(INTERFACE_A + CommandLine::interface.get());
+        config.interface = CommandLine::interface.get();
 
     if (CommandLine::vid.set())
-        vid = CommandLine::vid.get();
+        config.vid = CommandLine::vid.get();
 
     if (CommandLine::pid.set())
-        pid = CommandLine::pid.get();
+        config.pid = CommandLine::pid.get();
 
-    CheckCleanupP(libusb_init(&libusb), libusb_init_failed);
-    CheckCleanupP(ftdi_init(&ftdi), ftdi_init_failed);
+    Check(mpsse.open(config));
 
-    /*
-     * Locate FTDI chip using it's VID:PID pair.  This doesn't uniquely identify
-     * the programmer so this will need to be improved.
-     */
-    handle = libusb_open_device_with_vid_pid(libusb, vid, pid);
+    MPSSESWDDriver swd(config, &mpsse);
 
-    CheckCleanupStringB(handle, libusb_open_failed,
-                        "No device found with VID:PID = 0x%04x:0x%04x\n",
-                        vid, pid);
+    Check(probe_main(swd));
 
-    CheckCleanupB(device = libusb_get_device(handle), get_failed);
-
-    /*
-     * The interface must be selected before the ftdi device can be opened.
-     */
-    CheckCleanupStringP(ftdi_set_interface(&ftdi, interface),
-                        interface_failed,
-                        "Unable to set FTDI device interface: %s",
-                        ftdi_get_error_string(&ftdi));
-
-    CheckCleanupStringP(ftdi_usb_open_dev(&ftdi, device),
-                        open_failed,
-                        "Unable to open FTDI device: %s",
-                        ftdi_get_error_string(&ftdi));
-
-    CheckCleanupStringP(ftdi_usb_reset(&ftdi),
-                        reset_failed,
-                        "FTDI device reset failed: %s",
-                        ftdi_get_error_string(&ftdi));
-
-    {
-        unsigned chipid;
-
-        CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
-
-        debug(3, "FTDI chipid: %X", chipid);
-    }
-
-    {
-        MPSSESWDDriver swd(*config, &ftdi);
-        CheckCleanup(probe_main(swd), probe_failed);
-    }
-
-probe_failed:
-    CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
-
-read_failed:
-reset_failed:
-    CheckStringP(ftdi_usb_close(&ftdi),
-                 "Unable to close FTDI device: %s",
-                 ftdi_get_error_string(&ftdi));
-
-open_failed:
-interface_failed:
-get_failed:
-    libusb_close(handle);
-
-libusb_open_failed:
-    ftdi_deinit(&ftdi);
-
-ftdi_init_failed:
-    libusb_exit(libusb);
-
-libusb_init_failed:
-    return check_error;
+    return Err::success;
 }
 
 /******************************************************************************/

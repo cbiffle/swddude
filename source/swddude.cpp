@@ -46,8 +46,6 @@
 
 #include <unistd.h>
 #include <stdio.h>
-#include <libusb.h>
-#include <ftdi.h>
 #include <inttypes.h>
 
 using Err::Error;
@@ -465,27 +463,14 @@ comms_failure:
     return check_error;
 }
 
-static Error lookup_programmer(String name, MPSSEConfig * config)
-{
-    if      (name.equal("um232h"))      *config = um232h_config;
-    else if (name.equal("bus_blaster")) *config = bus_blaster_config;
-    else return Err::failure;
-
-    return Err::success;
-}
-
 /*******************************************************************************
  * Entry point (sort of -- see main below)
  */
 
 static Error error_main(int argc, char const ** argv)
 {
-    Error                       check_error = Err::success;
-    libusb_context *            libusb;
-    libusb_device_handle *      handle;
-    libusb_device *             device;
-    ftdi_context                ftdi;
-    MPSSEConfig                 config;
+    MPSSEConfig config;
+    MPSSE       mpsse;
 
     Check(lookup_programmer(CommandLine::programmer.get(), &config));
 
@@ -498,75 +483,13 @@ static Error error_main(int argc, char const ** argv)
     if (CommandLine::pid.set())
         config.pid = CommandLine::pid.get();
 
-    CheckCleanupP(libusb_init(&libusb), libusb_init_failed);
-    CheckCleanupP(ftdi_init(&ftdi), ftdi_init_failed);
+    Check(mpsse.open(config));
 
-    /*
-     * Locate FTDI chip using it's VID:PID pair.  This doesn't uniquely identify
-     * the programmer so this will need to be improved.
-     */
-    handle = libusb_open_device_with_vid_pid(libusb, config.vid, config.pid);
+    MPSSESWDDriver swd(config, &mpsse);
 
-    CheckCleanupStringB(handle, libusb_open_failed,
-                        "No device found with VID:PID = 0x%04x:0x%04x\n",
-                        config.vid, config.pid);
+    Check(run_experiment(swd));
 
-    CheckCleanupB(device = libusb_get_device(handle), get_failed);
-
-    /*
-     * The interface must be selected before the ftdi device can be opened.
-     */
-    CheckCleanupStringP(ftdi_set_interface(&ftdi,
-                                           ftdi_interface(config.interface)),
-                        interface_failed,
-                        "Unable to set FTDI device interface: %s",
-                        ftdi_get_error_string(&ftdi));
-
-    CheckCleanupStringP(ftdi_usb_open_dev(&ftdi, device),
-                        open_failed,
-                        "Unable to open FTDI device: %s",
-                        ftdi_get_error_string(&ftdi));
-
-    CheckCleanupStringP(ftdi_usb_reset(&ftdi),
-                        reset_failed,
-                        "FTDI device reset failed: %s",
-                        ftdi_get_error_string(&ftdi));
-
-    {
-        unsigned        chipid;
-
-        CheckCleanupP(ftdi_read_chipid(&ftdi, &chipid), read_failed);
-
-        debug(3, "FTDI chipid: %X", chipid);
-    }
-
-    {
-        MPSSESWDDriver swd(config, &ftdi);
-        CheckCleanup(run_experiment(swd), experiment_failed);
-    }
-
-  experiment_failed:
-    CheckP(ftdi_set_bitmode(&ftdi, 0xFF, BITMODE_RESET));
-
-  read_failed:
-  reset_failed:
-    CheckStringP(ftdi_usb_close(&ftdi),
-                 "Unable to close FTDI device: %s",
-                 ftdi_get_error_string(&ftdi));
-
-  open_failed:
-  interface_failed:
-  get_failed:
-    libusb_close(handle);
-
-  libusb_open_failed:
-    ftdi_deinit(&ftdi);
-
-  ftdi_init_failed:
-    libusb_exit(libusb);
-
-  libusb_init_failed:
-    return check_error;
+    return Err::success;
 }
 
 
