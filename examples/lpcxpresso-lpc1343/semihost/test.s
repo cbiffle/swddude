@@ -75,27 +75,8 @@ delay:
 @ Clobbers: r0, r1
 .thumb_func
 semihost_puts:
-    push {r4, lr}           @ Store volatile state.
-    movs r4, r0             @ Copy string address into r4.
-
-1:  ldrb r0, [r4], #1       @ Load byte and advance pointer.
-    cbz r0, 2f              @ Escape if byte is zero.
-    bl semihost_putc        @ Print byte.
-    b 1b
-
-2:  pop {r4, pc}            @ Restore and return.
-
-@ semihost_putc
-@ Prints a character to a debugger using semi-hosting.
-@
-@ Inputs:
-@  r0 - character to print.
-@ Outputs: none
-@ Clobbers: r0, r1
-.thumb_func
-semihost_putc:
-    movs r1, r0             @ Move character out of the way.
-    movs r0, #0x3           @ Set operation to SYS_WRITEC.
+    movs r1, r0             @ Move address into parameter register.
+    movs r0, #0x4           @ Set operation to SYS_WRITE0.
     bkpt 0xAB               @ Go!
     bx lr                   @ Return.
 

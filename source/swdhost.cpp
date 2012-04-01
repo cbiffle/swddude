@@ -93,6 +93,43 @@ Error write_char(Target & target, word_t parameter)
 }
 
 /*******************************************************************************
+ * Implements the semihosting SYS_WRITE0 operation.
+ */
+Error write_str(Target & target, word_t parameter)
+{
+    /*
+     * This is a byte string, but the target only supports 32-bit accesses.
+     * So, we have to jump through some hoops to transfer it.
+     */
+
+    rptr_const<word_t> str_word_addr(parameter & ~0x3);
+    word_t str_word;
+    Check(target.read_word(str_word_addr, &str_word));
+
+    unsigned bytes_left_in_word = 4 - (parameter & 0x3);
+
+    while (true)
+    {
+        while (bytes_left_in_word)
+        {
+            char c = str_word & 0xFF;
+            str_word >>= 8;
+            --bytes_left_in_word;
+
+            if (c) putchar(c);
+            else goto end_of_string;
+        }
+
+        Check(target.read_word(++str_word_addr, &str_word));
+        bytes_left_in_word = 4;
+    }
+
+end_of_string:
+    fflush(stdout);
+    return Err::success;
+}
+
+/*******************************************************************************
  * Inspects the CPU's halt conditions to see whether semihosting has been
  * invoked.
  */
@@ -139,6 +176,10 @@ Error handle_halt(Target & target)
             {
                 case 0x3:
                     Check(write_char(target, parameter));
+                    break;
+
+                case 0x4:
+                    Check(write_str(target, parameter));
                     break;
 
                 default:
