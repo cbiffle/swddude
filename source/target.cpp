@@ -174,12 +174,14 @@ Error Target::write_word(rptr<word_t> address, word_t data)
     Check(write_ap(MEM_AP::TAR, address.bits()));
     CheckRetry(write_ap(MEM_AP::DRW, data), 100);
 
+    // Kick off a pipelined read.
+    CheckRetry(start_read_ap(MEM_AP::CSW), 100);
+
     // Block waiting for write to complete.
     word_t csw = MEM_AP::CSW_TRINPROG;
     while (csw & MEM_AP::CSW_TRINPROG)
     {
-        CheckRetry(start_read_ap(MEM_AP::CSW), 100);
-        Check(final_read_ap(&csw));
+        CheckRetry(step_read_ap(MEM_AP::CSW, &csw), 100);
     }
 
     return Err::success;
