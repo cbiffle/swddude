@@ -13,6 +13,25 @@ using namespace ARM;
 using namespace ARMv6M_v7M;
 
 /*******************************************************************************
+ * Configuration
+ */
+
+/*
+ * The ARM ADIv5 docs on the algorithm for writing to memory are slightly
+ * ambiguous.  Do we need to poll the CSW.TrInProg bit or not?  Not doing so
+ * gives a large performance boost, and appears to work!
+ *
+ * However, on more complex targets like the dual-processor NXP43xx series,
+ * we might have to return to a literal interpretation of the standard.  If
+ * memory accesses are faulting on a new target, try setting this back to
+ * true.
+ *
+ * (cbiffle 2012-03-31)
+ */
+static bool const use_careful_memory_writes = false;
+
+
+/*******************************************************************************
  * AP registers in the MEM-AP.
  */
 namespace MEM_AP
@@ -174,14 +193,17 @@ Error Target::write_word(rptr<word_t> address, word_t data)
     Check(write_ap(MEM_AP::TAR, address.bits()));
     CheckRetry(write_ap(MEM_AP::DRW, data), 100);
 
-    // Kick off a pipelined read.
-    CheckRetry(start_read_ap(MEM_AP::CSW), 100);
-
-    // Block waiting for write to complete.
-    word_t csw = MEM_AP::CSW_TRINPROG;
-    while (csw & MEM_AP::CSW_TRINPROG)
+    if (use_careful_memory_writes)
     {
-        CheckRetry(step_read_ap(MEM_AP::CSW, &csw), 100);
+      // Kick off a pipelined read.
+      CheckRetry(start_read_ap(MEM_AP::CSW), 100);
+
+      // Block waiting for write to complete.
+      word_t csw = MEM_AP::CSW_TRINPROG;
+      while (csw & MEM_AP::CSW_TRINPROG)
+      {
+          CheckRetry(step_read_ap(MEM_AP::CSW, &csw), 100);
+      }
     }
 
     return Err::success;
