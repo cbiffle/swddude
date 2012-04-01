@@ -147,31 +147,10 @@ Error Target::read_words(rptr_const<word_t> target_addr,
           host_buffer,
           count);
 
-    // Configure MEM-AP for auto-incrementing 32-bit transactions.
-    Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
-    word_t csw;
-    Check(final_read_ap(&csw));
-    csw = (csw & MEM_AP::CSW_RESERVED_mask)
-        | MEM_AP::CSW_ADDRINC_SINGLE
-        | MEM_AP::CSW_SIZE_4;
-    Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
-
-    // Load Transfer Address Register with first address.
-    Check(write_tar(target_addr));
-
-    // Transfer using pipelined reads.
-    CheckRetry(start_read_ap(MEM_AP::DRW), 100);
     for (size_t i = 0; i < count; ++i)
     {
-        CheckRetry(step_read_ap(MEM_AP::DRW, &host_buffer[i]), 100);
+        Check(read_word(target_addr + i, &host_buffer[i]));
     }
-
-    // Update cached TAR to reflect incrementing.
-    _tar = rptr<word_t>((target_addr + count).bits());
-
-    // Turn incrementing back off.
-    csw = csw & ~MEM_AP::CSW_ADDRINC_mask;
-    Check(write_ap(MEM_AP::CSW, csw));
 
     return Err::success;
 }
@@ -195,26 +174,10 @@ Error Target::write_words(word_t const * host_buffer,
           target_addr.bits(),
           count);
 
-    // Configure MEM-AP for auto-incrementing 32-bit transactions.
-    Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
-    word_t csw;
-    Check(final_read_ap(&csw));
-    csw = (csw & MEM_AP::CSW_RESERVED_mask)
-        | MEM_AP::CSW_ADDRINC_SINGLE
-        | MEM_AP::CSW_SIZE_4;
-    Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
-
-    // Load Transfer Address Register with first address.
-    Check(write_tar(target_addr));
-
     for (size_t i = 0; i < count; ++i)
     {
-        Check(write_ap(MEM_AP::DRW, host_buffer[i]));
+        Check(write_word(target_addr + i, host_buffer[i]));
     }
-
-    // Turn incrementing back off.
-    csw = csw & ~MEM_AP::CSW_ADDRINC_mask;
-    Check(write_ap(MEM_AP::CSW, csw));
 
     return Err::success;
 }
