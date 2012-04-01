@@ -103,6 +103,9 @@ struct TargetInfo
     };
     cpu_t cpu;
 
+    unsigned major_revision;
+    unsigned minor_revision;
+
     TargetInfo() :
         mem_ap_found(false),
         mem_ap_index(0) {}
@@ -140,6 +143,10 @@ Error identify_cpu(Target & target, TargetInfo *info)
     {
         info->arch = TargetInfo::arch_v6m;
         info->cpu = TargetInfo::cpu_cortex_m0;
+        info->major_revision = variant;
+        info->minor_revision = rev;
+
+        notice("CPU is Cortex-M0 r%up%u", variant, rev);
     }
     else if (implementer == 0x41
             && arch_rev == 0xF
@@ -147,6 +154,10 @@ Error identify_cpu(Target & target, TargetInfo *info)
     {
         info->arch = TargetInfo::arch_v7m;
         info->cpu = TargetInfo::cpu_cortex_m3;
+        info->major_revision = variant;
+        info->minor_revision = rev;
+
+        notice("CPU is Cortex-M3 r%up%u", variant, rev);
     }
     else
     {
@@ -562,6 +573,8 @@ Error probe_mem_ap(SWDDriver &       swd,
         rptr_const<word_t> regfile(base & ~0xFFF);
 
         Check(target.initialize(false));
+
+        Check(identify_cpu(target, info));
 
         // Treat this peripheral as "unknown" to use type dispatching.
         Check(probe_unknown_device(target, regfile, info));
