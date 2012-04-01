@@ -22,13 +22,20 @@ class SWDDriver;
 
 class Target
 {
-    // State set during construction:
+    /*
+     * State set during construction
+     */
+
     SWDDriver &_swd;        // Underlying SWD driver.
     DebugAccessPort &_dap;  // DAP to wrap.
     uint8_t _mem_ap_index;  // Index of the sole AP used (a MEM-AP); often 0.
 
-    // State updated during use:
-    rptr<ARM::word_t> _tar;  // Contents of Transfer Address Register.
+    /*
+     * State updated during use
+     */
+
+    // Contents of Transfer Address Register; base of current memory bank.
+    rptr<ARM::word_t> _bank_base;
 
     // Writes data to a register in AP #0.
     Err::Error write_ap(uint8_t address, ARM::word_t data);
@@ -42,8 +49,8 @@ class Target
     Err::Error step_read_ap(uint8_t next_address, ARM::word_t * last_data);
     Err::Error final_read_ap(ARM::word_t * data);
 
-    // Updates TAR to point to the desired location, if necessary.
-    Err::Error write_tar(rptr_const<ARM::word_t>);
+    // Makes 16 bytes including the given address visible in the MEM-AP.
+    Err::Error set_memory_bank(rptr_const<ARM::word_t>);
 
 public:
     Target(SWDDriver &, DebugAccessPort &, uint8_t mem_ap_index);

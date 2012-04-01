@@ -52,6 +52,10 @@ namespace MEM_AP
 
     static uint32_t const TAR = 0x04;
     static uint32_t const DRW = 0x0C;
+    static uint32_t const BD0 = 0x10;
+    static uint32_t const BD1 = 0x14;
+    static uint32_t const BD2 = 0x18;
+    static uint32_t const BD3 = 0x1C;
 }
 
 /*******************************************************************************
@@ -78,12 +82,15 @@ Error Target::final_read_ap(word_t * data)
     return _dap.read_rdbuff(data);
 }
 
-Error Target::write_tar(rptr_const<word_t> address)
+Error Target::set_memory_bank(rptr_const<word_t> address)
 {
-    if (_tar != rptr<word_t>(address.bits()))
+    // Compute the address of the 16-byte bank that contains our address.
+    rptr<word_t> base(address.bits() & ~0xF);
+
+    if (_bank_base != base)
     {
-        CheckRetry(write_ap(MEM_AP::TAR, address.bits()), 100);
-        _tar = rptr<word_t>(address.bits());
+        CheckRetry(write_ap(MEM_AP::TAR, base.bits()), 100);
+        _bank_base = base;
     }
 
     return Err::success;
@@ -97,7 +104,7 @@ Target::Target(SWDDriver & swd, DebugAccessPort & dap, uint8_t mem_ap_index) :
     _swd(swd),
     _dap(dap),
     _mem_ap_index(mem_ap_index),
-    _tar(0) {}
+    _bank_base(-1) {}
 
 Error Target::initialize(bool enable_debugging)
 {
@@ -111,12 +118,7 @@ Error Target::initialize(bool enable_debugging)
     csw &= ~MEM_AP::CSW_ADDRINC_mask;
     Check(write_ap(MEM_AP::CSW, csw));  // Write it back.
 
-    // Load the TAR contents so we can coalesce writes.
-    word_t tar_bits;
-    CheckRetry(start_read_ap(MEM_AP::TAR), 100);
-    CheckRetry(final_read_ap(&tar_bits), 100);
-
-    _tar = rptr<word_t>(tar_bits);
+    Check(set_memory_bank(rptr_const<word_t>(0)));
 
     if (enable_debugging)
     {
@@ -158,8 +160,12 @@ Error Target::read_words(rptr_const<word_t> target_addr,
 Error Target::read_word(rptr_const<word_t> address, word_t * data)
 {
     debug(3, "Target::read_word(%08X, %p)", address.bits(), data);
-    Check(write_tar(address));
-    CheckRetry(start_read_ap(MEM_AP::DRW), 100);
+    Check(set_memory_bank(address));
+
+    unsigned offset = address.bits() - _bank_base.bits();
+    debug(4, "Will read from BD offset %u", offset);
+
+    CheckRetry(start_read_ap(MEM_AP::BD0 + offset), 100);
     CheckRetry(final_read_ap(data), 100);
 
     return Err::success;
@@ -185,8 +191,12 @@ Error Target::write_words(word_t const * host_buffer,
 Error Target::write_word(rptr<word_t> address, word_t data)
 {
     debug(3, "Target::write_word(%08X, %08X)", address.bits(), data);
-    Check(write_tar(address));
-    CheckRetry(write_ap(MEM_AP::DRW, data), 100);
+    Check(set_memory_bank(address));
+
+    unsigned offset = address.bits() - _bank_base.bits();
+    debug(4, "Will write to BD offset %u", offset);
+
+    CheckRetry(write_ap(MEM_AP::BD0 + offset, data), 100);
 
     if (use_careful_memory_writes)
     {
