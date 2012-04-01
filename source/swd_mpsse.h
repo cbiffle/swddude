@@ -25,9 +25,9 @@ struct MPSSEPinConfig
 
 struct MPSSEConfig
 {
-    uint16_t            default_vid;
-    uint16_t            default_pid;
-    int                 default_interface;
+    uint16_t            vid;
+    uint16_t            pid;
+    int                 interface;
     MPSSEPinConfig      idle_read;
     MPSSEPinConfig      idle_write;
     MPSSEPinConfig      reset_target;

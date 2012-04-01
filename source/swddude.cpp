@@ -465,10 +465,10 @@ comms_failure:
     return check_error;
 }
 
-static Error lookup_programmer(String name, MPSSEConfig const * * config)
+static Error lookup_programmer(String name, MPSSEConfig * config)
 {
-    if      (name.equal("um232h"))      *config = &um232h_config;
-    else if (name.equal("bus_blaster")) *config = &bus_blaster_config;
+    if      (name.equal("um232h"))      *config = um232h_config;
+    else if (name.equal("bus_blaster")) *config = bus_blaster_config;
     else return Err::failure;
 
     return Err::success;
@@ -485,23 +485,18 @@ static Error error_main(int argc, char const ** argv)
     libusb_device_handle *      handle;
     libusb_device *             device;
     ftdi_context                ftdi;
-    MPSSEConfig const *         config;
+    MPSSEConfig                 config;
 
     Check(lookup_programmer(CommandLine::programmer.get(), &config));
 
-    ftdi_interface interface = ftdi_interface(INTERFACE_A +
-                                              config->default_interface);
-    uint16_t       vid       = config->default_vid;
-    uint16_t       pid       = config->default_pid;
-
     if (CommandLine::interface.set())
-        interface = ftdi_interface(INTERFACE_A + CommandLine::interface.get());
+        config.interface = CommandLine::interface.get();
 
     if (CommandLine::vid.set())
-        vid = CommandLine::vid.get();
+        config.vid = CommandLine::vid.get();
 
     if (CommandLine::pid.set())
-        pid = CommandLine::pid.get();
+        config.pid = CommandLine::pid.get();
 
     CheckCleanupP(libusb_init(&libusb), libusb_init_failed);
     CheckCleanupP(ftdi_init(&ftdi), ftdi_init_failed);
@@ -510,18 +505,19 @@ static Error error_main(int argc, char const ** argv)
      * Locate FTDI chip using it's VID:PID pair.  This doesn't uniquely identify
      * the programmer so this will need to be improved.
      */
-    handle = libusb_open_device_with_vid_pid(libusb, vid, pid);
+    handle = libusb_open_device_with_vid_pid(libusb, config.vid, config.pid);
 
     CheckCleanupStringB(handle, libusb_open_failed,
                         "No device found with VID:PID = 0x%04x:0x%04x\n",
-                        vid, pid);
+                        config.vid, config.pid);
 
     CheckCleanupB(device = libusb_get_device(handle), get_failed);
 
     /*
      * The interface must be selected before the ftdi device can be opened.
      */
-    CheckCleanupStringP(ftdi_set_interface(&ftdi, interface),
+    CheckCleanupStringP(ftdi_set_interface(&ftdi,
+                                           ftdi_interface(config.interface)),
                         interface_failed,
                         "Unable to set FTDI device interface: %s",
                         ftdi_get_error_string(&ftdi));
@@ -545,7 +541,7 @@ static Error error_main(int argc, char const ** argv)
     }
 
     {
-        MPSSESWDDriver swd(*config, &ftdi);
+        MPSSESWDDriver swd(config, &ftdi);
         CheckCleanup(run_experiment(swd), experiment_failed);
     }
 
