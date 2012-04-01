@@ -62,3 +62,5 @@ delay:
     bne 1b                  @ Repeat if not equal to zero.
 
     bx lr                   @ Return!
+
+    .align 4
