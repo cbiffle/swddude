@@ -64,15 +64,11 @@ Error Target::peek32(rptr_const<word_t> address, word_t * data)
     CheckRetry(start_read_ap(MEM_AP::DRW), 100);
     CheckRetry(final_read_ap(data), 100);
 
-    debug(3, "peek32(%08X) = %08X", address.bits(), *data);
-
     return Err::success;
 }
 
 Error Target::poke32(rptr<word_t> address, word_t data)
 {
-    debug(3, "poke32(%08X, %08X)", address.bits(), data);
-
     Check(write_ap(MEM_AP::TAR, address.bits()));
     CheckRetry(write_ap(MEM_AP::DRW, data), 100);
 
@@ -98,6 +94,8 @@ Target::Target(SWDDriver & swd, DebugAccessPort & dap, uint8_t mem_ap_index) :
 
 Error Target::initialize(bool enable_debugging)
 {
+    debug(3, "Target::initialize(%d)", enable_debugging);
+
     // We only use one AP.  Go ahead and select it and configure CSW.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
     word_t csw;
@@ -108,12 +106,12 @@ Error Target::initialize(bool enable_debugging)
     if (enable_debugging)
     {
         word_t dhcsr;
-        Check(peek32(DCB::DHCSR, &dhcsr));
+        Check(read_word(DCB::DHCSR, &dhcsr));
         if ((dhcsr & (1 << 0)) == 0)
         {
-            Check(poke32(DCB::DHCSR, (dhcsr & DCB::DHCSR_update_mask)
-                                            | DCB::DHCSR_DBGKEY
-                                            | DCB::DHCSR_C_DEBUGEN));
+            Check(write_word(DCB::DHCSR, (dhcsr & DCB::DHCSR_update_mask)
+                                                | DCB::DHCSR_DBGKEY
+                                                | DCB::DHCSR_C_DEBUGEN));
         }
     }
 
@@ -129,7 +127,7 @@ Error Target::read_words(rptr_const<word_t> target_addr,
                          word_t * host_buffer,
                          size_t count)
 {
-    debug(2, "read_words(%08X, %p, %zu)",
+    debug(3, "Target::read_words(%08X, %p, %zu)",
           target_addr.bits(),
           host_buffer,
           count);
@@ -158,6 +156,7 @@ Error Target::read_words(rptr_const<word_t> target_addr,
 
 Error Target::read_word(rptr_const<word_t> addr, word_t * data)
 {
+    debug(3, "Target::read_word(%08X, %p)", addr.bits(), data);
     return peek32(addr, data);
 }
 
@@ -165,6 +164,11 @@ Error Target::write_words(word_t const * host_buffer,
                           rptr<word_t> target_addr,
                           size_t count)
 {
+    debug(3, "Target::write_words(%p, %08X, %zu)",
+          host_buffer,
+          target_addr.bits(),
+          count);
+
     // Configure MEM-AP for auto-incrementing 32-bit transactions.
     Check(start_read_ap(MEM_AP::CSW));  // Load previous value.
     word_t csw;
@@ -187,6 +191,7 @@ Error Target::write_words(word_t const * host_buffer,
 
 Error Target::write_word(rptr<word_t> addr, word_t data)
 {
+    debug(3, "Target::write_word(%08X, %08X)", addr.bits(), data);
     return poke32(addr, data);
 }
 
@@ -197,27 +202,31 @@ Error Target::write_word(rptr<word_t> addr, word_t data)
 
 Error Target::read_register(Register::Number reg, word_t * out)
 {
-    Check(poke32(DCB::DCRSR, DCB::DCRSR_READ | (reg & 0x1F)));
+    debug(3, "Target::read_register(%u, %p)", reg, out);
+
+    Check(write_word(DCB::DCRSR, DCB::DCRSR_READ | (reg & 0x1F)));
 
     word_t dhcsr;
     do
     {
-        Check(peek32(DCB::DHCSR, &dhcsr));
+        Check(read_word(DCB::DHCSR, &dhcsr));
     }
     while ((dhcsr & DCB::DHCSR_S_REGRDY) == 0);
 
-    return peek32(DCB::DCRDR, out);
+    return read_word(DCB::DCRDR, out);
 }
 
 Error Target::write_register(Register::Number reg, word_t data)
 {
-    Check(poke32(DCB::DCRDR, data));
-    Check(poke32(DCB::DCRSR, DCB::DCRSR_WRITE | (reg & 0x1F)));
+    debug(3, "Target::write_register(%u, %08X)", reg, data);
+
+    Check(write_word(DCB::DCRDR, data));
+    Check(write_word(DCB::DCRSR, DCB::DCRSR_WRITE | (reg & 0x1F)));
 
     word_t dhcsr;
     do
     {
-        Check(peek32(DCB::DHCSR, &dhcsr));
+        Check(read_word(DCB::DHCSR, &dhcsr));
     }
     while ((dhcsr & DCB::DHCSR_S_REGRDY) == 0);
 
@@ -231,30 +240,34 @@ Error Target::write_register(Register::Number reg, word_t data)
 
 Error Target::reset_and_halt()
 {
+    debug(3, "Target::reset_and_halt()");
+
     // Save old DEMCR just in case.
     word_t demcr;
-    Check(peek32(DCB::DEMCR, &demcr));
+    Check(read_word(DCB::DEMCR, &demcr));
 
     // Write DEMCR back to request Vector Catch.
-    Check(poke32(DCB::DEMCR, demcr | DCB::DEMCR_VC_CORERESET
-                                   | DCB::DEMCR_VC_HARDERR
-                                   | DCB::DEMCR_DWTENA));
+    Check(write_word(DCB::DEMCR, demcr | DCB::DEMCR_VC_CORERESET
+                                       | DCB::DEMCR_VC_HARDERR
+                                       | DCB::DEMCR_DWTENA));
 
     // Request a processor-local reset.
-    Check(poke32(SCB::AIRCR, SCB::AIRCR_VECTKEY | SCB::AIRCR_SYSRESETREQ));
+    Check(write_word(SCB::AIRCR, SCB::AIRCR_VECTKEY | SCB::AIRCR_SYSRESETREQ));
 
     // Wait for the processor to halt.
     CheckRetry(poll_for_halt(SCB::DFSR_VCATCH), 1000);
 
     // Restore DEMCR.
-    Check(poke32(DCB::DEMCR, demcr));
+    Check(write_word(DCB::DEMCR, demcr));
 
     return Err::success;
 }
 
 Error Target::halt()
 {
-    return poke32(DCB::DHCSR, DCB::DHCSR_DBGKEY
+    debug(3, "Target::halt()");
+
+    return write_word(DCB::DHCSR, DCB::DHCSR_DBGKEY
                             | DCB::DHCSR_C_HALT
                             | DCB::DHCSR_C_DEBUGEN);
 }
@@ -262,11 +275,12 @@ Error Target::halt()
 Error Target::poll_for_halt(unsigned dfsr_mask)
 {
     word_t dhcsr;
-    Check(peek32(DCB::DHCSR, &dhcsr));
+    Check(read_word(DCB::DHCSR, &dhcsr));
     word_t dfsr;
-    Check(peek32(SCB::DFSR, &dfsr));
+    Check(read_word(SCB::DFSR, &dfsr));
 
-    debug(3, "poll_for_halt: DHCSR=%08X DFSR=%08X", dhcsr, dfsr);
+    debug(3, "Target::poll_for_halt(%u): DHCSR=%08X DFSR=%08X",
+          dfsr_mask, dhcsr, dfsr);
 
     if ((dhcsr & DCB::DHCSR_S_HALT) && (dfsr & dfsr_mask)) return Err::success;
 
@@ -275,15 +289,17 @@ Error Target::poll_for_halt(unsigned dfsr_mask)
 
 Error Target::resume()
 {
-    return poke32(DCB::DHCSR, DCB::DHCSR_DBGKEY
-                            | 0  // Do not set C_HALT
-                            | DCB::DHCSR_C_DEBUGEN);
+    debug(3, "Target::resume()");
+    return write_word(DCB::DHCSR, DCB::DHCSR_DBGKEY
+                                | 0  // Do not set C_HALT
+                                | DCB::DHCSR_C_DEBUGEN);
 }
 
 Error Target::is_halted(bool * flag)
 {
+    debug(3, "Target::is_halted");
     word_t dhcsr;
-    Check(peek32(DCB::DHCSR, &dhcsr));
+    Check(read_word(DCB::DHCSR, &dhcsr));
 
     *flag = dhcsr & DCB::DHCSR_S_HALT;
 
@@ -292,8 +308,10 @@ Error Target::is_halted(bool * flag)
 
 Error Target::read_halt_state(word_t * out)
 {
+    debug(3, "Target::read_halt_state(%p)", out);
+
     word_t dfsr;
-    Check(peek32(SCB::DFSR, &dfsr));
+    Check(read_word(SCB::DFSR, &dfsr));
 
     *out = dfsr & SCB::DFSR_reason_mask;
 
@@ -302,7 +320,8 @@ Error Target::read_halt_state(word_t * out)
 
 Error Target::reset_halt_state()
 {
-    return poke32(SCB::DFSR, SCB::DFSR_reason_mask);
+    debug(3, "Target::reset_halt_state()");
+    return write_word(SCB::DFSR, SCB::DFSR_reason_mask);
 }
 
 
@@ -312,18 +331,18 @@ Error Target::reset_halt_state()
 
 Error Target::enable_breakpoints()
 {
-    return poke32(BPU::BP_CTRL, BPU::BP_CTRL_KEY | BPU::BP_CTRL_ENABLE);
+    return write_word(BPU::BP_CTRL, BPU::BP_CTRL_KEY | BPU::BP_CTRL_ENABLE);
 }
 
 Error Target::disable_breakpoints()
 {
-    return poke32(BPU::BP_CTRL, BPU::BP_CTRL_KEY);
+    return write_word(BPU::BP_CTRL, BPU::BP_CTRL_KEY);
 }
 
 Error Target::are_breakpoints_enabled(bool * result)
 {
     word_t ctrl;
-    Check(peek32(BPU::BP_CTRL, &ctrl));
+    Check(read_word(BPU::BP_CTRL, &ctrl));
 
     *result = ctrl & BPU::BP_CTRL_KEY;
 
@@ -333,7 +352,7 @@ Error Target::are_breakpoints_enabled(bool * result)
 Error Target::get_breakpoint_count(size_t * n)
 {
     word_t ctrl;
-    Check(peek32(BPU::BP_CTRL, &ctrl));
+    Check(read_word(BPU::BP_CTRL, &ctrl));
 
     *n = BPU::BP_CTRL_NUM_CODE.extract(ctrl);
 
@@ -352,13 +371,13 @@ Error Target::enable_breakpoint(size_t n, rptr_const<thumb_code_t> addr)
 
     // Break on upper or lower halfword, depending on bit 1 of address.
     rptr<word_t> reg = BPU::BP_COMP0 + n;
-    return poke32(reg, ((addr.bit<1>()) ? BPU::BP_COMPx_MATCH_HIGH
+    return write_word(reg, ((addr.bit<1>()) ? BPU::BP_COMPx_MATCH_HIGH
                                    : BPU::BP_COMPx_MATCH_LOW)
-                     | (addr.bits() & BPU::BP_COMPx_COMP_mask)
-                     | BPU::BP_COMPx_ENABLE);
+                         | (addr.bits() & BPU::BP_COMPx_COMP_mask)
+                         | BPU::BP_COMPx_ENABLE);
 }
 
 Error Target::disable_breakpoint(size_t n)
 {
-    return poke32(BPU::BP_COMP0 + n, 0);
+    return write_word(BPU::BP_COMP0 + n, 0);
 }

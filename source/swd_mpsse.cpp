@@ -237,6 +237,9 @@ Error swd_reset(MPSSEConfig const & config, ftdi_context * ftdi)
         config.idle_write.high_state,
         config.idle_write.high_direction,
 
+        /*
+         * Clock one idle bit.
+         */
         CLK_BITS, FTL(1)
     };
 
@@ -268,9 +271,9 @@ MPSSESWDDriver::MPSSESWDDriver(MPSSEConfig const & config,
 /******************************************************************************/
 Error MPSSESWDDriver::initialize(uint32_t * idcode_out)
 {
-    debug(3, "MPSSESWDDriver::initialize");
+    debug(4, "MPSSESWDDriver::initialize");
 
-    Check(mpsse_setup(_config, _ftdi, 1000000));
+    Check(mpsse_setup(_config, _ftdi, 10000000));
     Check(swd_reset(_config, _ftdi));
 
     /*
@@ -282,9 +285,9 @@ Error MPSSESWDDriver::initialize(uint32_t * idcode_out)
     Check(read(DebugAccessPort::kRegIDCODE, true, &idcode));
 
     debug(4, "Debug Port IDCODE = %08X", idcode);
-    debug(5, "Version:  %X", idcode >> 28);
-    debug(5, "Part:     %X", (idcode >> 12) & 0xFFFF);
-    debug(5, "Designer: %X", (idcode >> 1) & 0x7FF);
+    debug(4, "Version:  %X", idcode >> 28);
+    debug(4, "Part:     %X", (idcode >> 12) & 0xFFFF);
+    debug(4, "Designer: %X", (idcode >> 1) & 0x7FF);
 
     if (idcode_out)
         *idcode_out = idcode;
@@ -304,7 +307,7 @@ Error MPSSESWDDriver::enter_reset()
         _config.reset_target.high_direction,
     };
 
-    debug(3, "MPSSESWDDriver::enter_reset");
+    debug(4, "MPSSESWDDriver::enter_reset");
 
     Check(mpsse_write(_ftdi, commands, sizeof(commands)));
 
@@ -323,7 +326,7 @@ Error MPSSESWDDriver::leave_reset()
         _config.idle_write.high_direction,
     };
 
-    debug(3, "MPSSESWDDriver::leave_reset");
+    debug(4, "MPSSESWDDriver::leave_reset");
 
     Check(mpsse_write(_ftdi, commands, sizeof(commands)));
 
@@ -332,7 +335,7 @@ Error MPSSESWDDriver::leave_reset()
 /******************************************************************************/
 Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
 {
-    debug(3, "MPSSESWDDriver::read(%08X, %d)", address, debug_port);
+    debug(4, "MPSSESWDDriver::read(%08X, %d)", address, debug_port);
 
     uint8_t     request_commands[] =
     {
@@ -381,7 +384,7 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
 
     uint8_t     ack = response[0] >> 5;
 
-    debug(4, "SWD read got response %u", ack);
+    debug(5, "SWD read got response %u", ack);
 
     if (ack == 0x01)
     {
@@ -405,7 +408,7 @@ Error MPSSESWDDriver::read(unsigned address, bool debug_port, uint32_t * data)
         if (data)
             *data = temp;
 
-        debug(4, "SWD read (%X, %d) = %08X complete with status %d",
+        debug(5, "SWD read (%X, %d) = %08X complete with status %d",
               address, debug_port, temp, ack);
     }
 
@@ -457,7 +460,7 @@ Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
         parity ? 0xff : 0x00,
     };
 
-    debug(3, "MPSSESWDDriver::write(%08X, %d, %08X)",
+    debug(4, "MPSSESWDDriver::write(%08X, %d, %08X)",
           address, debug_port, data);
 
     uint8_t     response[1] = {0};
@@ -467,7 +470,7 @@ Error MPSSESWDDriver::write(unsigned address, bool debug_port, uint32_t data)
 
     uint8_t     ack = response[0] >> 5;
 
-    debug(4, "SWD write got response %u", ack);
+    debug(5, "SWD write got response %u", ack);
 
     if (ack == 0x01)
         Check(mpsse_write(_ftdi, data_commands, sizeof(data_commands)));
