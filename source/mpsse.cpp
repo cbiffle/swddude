@@ -44,9 +44,9 @@ MPSSE::~MPSSE()
 {
     ftdi_set_bitmode(&_ftdi, 0xFF, BITMODE_RESET);
     ftdi_usb_close(&_ftdi);
-    libusb_close(_handle);
+    if (_handle) libusb_close(_handle);
     ftdi_deinit(&_ftdi);
-    libusb_exit(_libusb);
+    if (_libusb) libusb_exit(_libusb);
 }
 /******************************************************************************/
 Error MPSSE::open(MPSSEConfig const & config)
@@ -111,6 +111,7 @@ Error MPSSE::open(MPSSEConfig const & config)
 
   ftdi_init_failed:
     libusb_exit(_libusb);
+    _libusb = 0;
 
   libusb_init_failed:
     return check_error;
