@@ -105,6 +105,7 @@ Error MPSSE::open(MPSSEConfig const & config)
   interface_failed:
   get_failed:
     libusb_close(_handle);
+    _handle = 0;
 
   libusb_open_failed:
     ftdi_deinit(&_ftdi);
