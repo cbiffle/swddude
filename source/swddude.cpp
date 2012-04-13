@@ -281,7 +281,8 @@ static Error program_flash(Target & target,
     rptr<word_t> const ram_buffer(0x10000000);
     rptr<word_t> const work_area(ram_buffer + words_per_block);
 
-    size_t const last_sector = word_count / words_per_sector;
+    size_t const last_sector =
+        (word_count + words_per_sector - 1) / words_per_sector;
     size_t const block_count =
         (word_count + words_per_block - 1) / words_per_block;
 
@@ -299,7 +300,7 @@ static Error program_flash(Target & target,
         rptr<word_t> block_address(block_offset * sizeof(word_t));
 
         size_t current_block_words =
-            std::max(word_count - block_offset, words_per_block);
+            std::min(word_count - block_offset, words_per_block);
 
         // Copy a block to RAM...
         debug(1, "Copying %zu words starting with #%u to %08X",
