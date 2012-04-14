@@ -93,7 +93,8 @@ public:
         return self(_bits + d * sizeof(type));
     }
 
-    inline self operator++() {
+    inline self operator++()
+    {
         _bits += sizeof(type);
         return *(self *) this;
     }
@@ -103,7 +104,11 @@ public:
         return self(_bits - d * sizeof(type));
     }
 
-    inline self operator--() const { return *this - 1; }
+    inline self operator--()
+    {
+        _bits -= sizeof(type);
+        return *(self *) this;
+    }
 };
 
 
